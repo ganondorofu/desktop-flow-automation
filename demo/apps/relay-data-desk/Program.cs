@@ -23,6 +23,8 @@ internal sealed class MainForm : Form
     private Button? fetchButton;
     private Button? copyButton;
     private Label? dataLabel;
+    private Label? sourceStatusLabel;
+    private Label? sourceStatusValueLabel;
 
     private static readonly Color Ink = Color.FromArgb(235, 239, 238);
     private static readonly Color Muted = Color.FromArgb(157, 170, 168);
@@ -109,8 +111,10 @@ internal sealed class MainForm : Form
         fetchButton.Width = 270;
         fetchButton.Click += (_, _) => FetchOrder(panel);
         panel.Controls.Add(fetchButton);
-        panel.Controls.Add(Label("SOURCE STATUS", 22, 151, 8, Muted));
-        panel.Controls.Add(Label("Connected to local demo data", 22, 170, 11, Teal));
+        sourceStatusLabel = Label("SOURCE STATUS", 22, 151, 8, Muted);
+        sourceStatusValueLabel = Label("Connected to local demo data", 22, 170, 11, Teal);
+        panel.Controls.Add(sourceStatusLabel);
+        panel.Controls.Add(sourceStatusValueLabel);
         content.Controls.Add(panel);
         CenterPanel(panel);
         fetchButton.Focus();
@@ -133,6 +137,12 @@ internal sealed class MainForm : Form
         {
             timer.Stop();
             timer.Dispose();
+            // These sat at y:151/170 — directly under where `dataLabel`
+            // (a 6-line block starting at y:145) was about to render,
+            // so its text overlapped and garbled together with theirs.
+            // Redundant anyway once real order data is showing.
+            if (sourceStatusLabel is not null) panel.Controls.Remove(sourceStatusLabel);
+            if (sourceStatusValueLabel is not null) panel.Controls.Remove(sourceStatusValueLabel);
             dataLabel = Label("ORDER  #RLY-2048\nCustomer     Aster Works\nItem         Wireless keyboard\nQuantity     3\nTotal        ¥12,800\nStatus       READY FOR RELAY", 22, 145, 12, Ink);
             dataLabel.Font = new Font("Consolas", 11F);
             dataLabel.AutoSize = true;

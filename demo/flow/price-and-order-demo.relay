@@ -23,9 +23,31 @@ steps:
     arg2: ""
     variable: price_value
 
-  - id: goto_order
+  - id: goto_login
     type: browser_navigate
-    url: https://ganondorofu.github.io/desktop-flow-automation/order.html
+    url: https://ganondorofu.github.io/desktop-flow-automation/login.html
+    instance: "%browser_instance%"
+
+  - id: wait_login
+    type: browser_wait_for_selector
+    selector: "#username"
+    instance: "%browser_instance%"
+
+  - id: set_username
+    type: browser_set_value
+    selector: "#username"
+    value: demo
+    instance: "%browser_instance%"
+
+  - id: set_password
+    type: browser_set_value
+    selector: "#password"
+    value: demo1234
+    instance: "%browser_instance%"
+
+  - id: click_login
+    type: browser_click
+    selector: "#login-btn"
     instance: "%browser_instance%"
 
   - id: wait_form
@@ -101,8 +123,16 @@ connections:
   - from: get_price
     to: extract_price
   - from: extract_price
-    to: goto_order
-  - from: goto_order
+    to: goto_login
+  - from: goto_login
+    to: wait_login
+  - from: wait_login
+    to: set_username
+  - from: set_username
+    to: set_password
+  - from: set_password
+    to: click_login
+  - from: click_login
     to: wait_form
   - from: wait_form
     to: set_qty

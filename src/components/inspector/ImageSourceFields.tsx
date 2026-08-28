@@ -28,6 +28,20 @@ export function ImageSourceFields({
   const [pathPreview, setPathPreview] = useState<string | null>(null);
   const [pendingCrop, setPendingCrop] = useState<string | null>(null);
   const [browseFailed, setBrowseFailed] = useState(false);
+  // Full-size preview base64 (embedded or path-loaded, whichever the
+  // user clicked) — the 40px thumbnail below crops non-square images
+  // via `object-fit: cover`, so most of a wide/tall reference image
+  // is otherwise never actually visible.
+  const [lightbox, setLightbox] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightbox(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox]);
 
   useEffect(() => {
     setPathPreview(null);
@@ -78,7 +92,9 @@ export function ImageSourceFields({
       <label>{t("inspector.fields.image")}</label>
       {image.kind === "embedded" ? (
         <div className="insp-image-embedded">
-          <img src={`data:image/png;base64,${image.data}`} alt="" className="insp-image-thumb" />
+          <button type="button" className="insp-image-thumb-btn" onClick={() => setLightbox(image.data)} title={t("inspector.fields.imageViewFull")}>
+            <img src={`data:image/png;base64,${image.data}`} alt="" className="insp-image-thumb" />
+          </button>
           <span>{t("inspector.fields.imageEmbedded")}</span>
         </div>
       ) : (
@@ -88,8 +104,17 @@ export function ImageSourceFields({
             value={image.value}
             onChange={(e) => onChangeImage({ kind: "path", value: e.target.value })}
           />
-          {pathPreview && <img src={`data:image/png;base64,${pathPreview}`} alt="" className="insp-image-thumb" />}
+          {pathPreview && (
+            <button type="button" className="insp-image-thumb-btn" onClick={() => setLightbox(pathPreview)} title={t("inspector.fields.imageViewFull")}>
+              <img src={`data:image/png;base64,${pathPreview}`} alt="" className="insp-image-thumb" />
+            </button>
+          )}
         </>
+      )}
+      {lightbox && (
+        <div className="image-lightbox-backdrop" onClick={() => setLightbox(null)}>
+          <img src={`data:image/png;base64,${lightbox}`} alt="" className="image-lightbox-img" />
+        </div>
       )}
       <div className="insp-image-actions">
         <CaptureRegionButton onCaptured={(data) => onChangeImage({ kind: "embedded", data })} />

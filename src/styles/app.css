@@ -1069,6 +1069,40 @@
   border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--surface-2);
+  display: block;
+}
+.insp-image-thumb-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 3px;
+}
+.insp-image-thumb-btn:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+/* `object-fit: cover` on the 40px thumbnail crops anything that isn't
+ * square — fine as a small preview, but it means most of a
+ * wide/tall reference image is never actually visible without this. */
+.image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--scrim-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  cursor: zoom-out;
+}
+.image-lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: var(--shadow-floating);
+  background: var(--surface);
 }
 .insp-image-actions {
   display: flex;
@@ -1676,40 +1710,6 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
-}
-.toggle-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 7px 0;
-  font-size: 11.5px;
-  color: var(--text-muted);
-}
-.switch-toggle {
-  flex: none;
-  width: 32px;
-  height: 18px;
-  border-radius: 9px;
-  background: var(--surface-3);
-  position: relative;
-}
-.switch-toggle::after {
-  content: "";
-  position: absolute;
-  left: 2px;
-  top: 2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--text-faint);
-}
-.switch-toggle.on {
-  background: var(--teal);
-}
-.switch-toggle.on::after {
-  left: auto;
-  right: 2px;
-  background: var(--text);
 }
 .weekday-row {
   display: flex;

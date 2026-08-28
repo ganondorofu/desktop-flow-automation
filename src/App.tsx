@@ -84,6 +84,30 @@ function dropMany(branch: Branch, anchorId: string | null, toInsert: FlowNode[])
   return toInsert.reduce((acc, node) => addStep(acc, anchorId, node), branch);
 }
 
+/** Where new nodes (added from the palette, pasted, or duplicated)
+ *  land on the canvas: a small cascade near `anchorId`'s *actual*
+ *  current position, one entry per node in `ids` order. Without this,
+ *  a brand-new node falls back to `Canvas.tsx`'s auto-layout, which
+ *  recomputes tidy positions from the graph's *topology* alone —
+ *  blind to wherever the user has since manually dragged things — so
+ *  once a flow has been rearranged at all (which is to say: almost
+ *  immediately, on any flow with more than a couple of steps), a
+ *  freshly added node routinely lands on top of, or right next to,
+ *  something already there instead of somewhere useful. Anchoring
+ *  explicitly to the selected node's real position sidesteps that
+ *  entirely; `null` (nothing selected, or the anchor was never
+ *  manually placed either) leaves those nodes for the auto-layout
+ *  fallback to place instead, same as before this existed. */
+function placementsNearAnchor(anchorId: string | null, positions: NodePositions, ids: string[]): NodePositions {
+  const anchor = anchorId ? positions[anchorId] : undefined;
+  if (!anchor) return {};
+  const placed: NodePositions = {};
+  ids.forEach((id, i) => {
+    placed[id] = { x: anchor.x + 60 + i * 32, y: anchor.y + 130 + i * 32 };
+  });
+  return placed;
+}
+
 const HISTORY_LIMIT = 50;
 
 // ---- Resizable/collapsible panel sizing (palette, inspector, the
@@ -566,6 +590,7 @@ function App() {
     const withPreset = preset ? ({ ...node, ...preset } as FlowNode) : node;
     const anchor = kind === "error_handler" ? null : primaryId;
     applyFlow((prev) => addStep(prev, anchor, withPreset));
+    setPositions((prev) => ({ ...prev, ...placementsNearAnchor(anchor, prev, [withPreset.id]) }));
     setSelectedIds([withPreset.id]);
   }
 
@@ -576,6 +601,7 @@ function App() {
   function handleAddIntoBranch(ownerId: string, branchKey: BranchKey, kind: FlowNode["kind"]) {
     const node = kind === "if" || kind === "loop" || kind === "try_catch" || kind === "function_def" ? makeBranch(kind) : makeLeaf(kind);
     applyFlow((prev) => addIntoBranch(prev, ownerId, branchKey, node));
+    setPositions((prev) => ({ ...prev, ...placementsNearAnchor(ownerId, prev, [node.id]) }));
     setSelectedIds([node.id]);
   }
 
@@ -680,6 +706,7 @@ function App() {
     if (clipboard.length === 0) return;
     const pasted = cloneNodes(clipboard);
     applyFlow((prev) => dropMany(prev, primaryId, pasted));
+    setPositions((prev) => ({ ...prev, ...placementsNearAnchor(primaryId, prev, pasted.map((n) => n.id)) }));
     setSelectedIds(pasted.map((n) => n.id));
   }
 
@@ -690,6 +717,7 @@ function App() {
     if (nodes.length === 0) return;
     const duplicated = cloneNodes(nodes);
     applyFlow((prev) => dropMany(prev, primaryId, duplicated));
+    setPositions((prev) => ({ ...prev, ...placementsNearAnchor(primaryId, prev, duplicated.map((n) => n.id)) }));
     setSelectedIds(duplicated.map((n) => n.id));
   }
 

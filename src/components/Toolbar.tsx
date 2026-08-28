@@ -6,7 +6,7 @@ import { ContextMenu, type MenuItem } from "./ContextMenu";
 import type { EdgeStyle, Orientation } from "./Canvas";
 import type { RecentFile } from "../data/fileOps";
 
-export type EditorMode = "flow" | "code" | "variables";
+export type EditorMode = "flow" | "code";
 
 /** Adding a language only ever grows this list, not the button on
  *  screen — the trigger always just shows the current one, unlike a
@@ -165,7 +165,6 @@ export function Toolbar({
       items: [
         { label: mode === "flow" ? `✓ ${t("toolbar.modeFlow")}` : t("toolbar.modeFlow"), onSelect: () => onModeChange("flow") },
         { label: mode === "code" ? `✓ ${t("toolbar.modeCode")}` : t("toolbar.modeCode"), onSelect: () => onModeChange("code") },
-        { label: mode === "variables" ? `✓ ${t("toolbar.modeVariables")}` : t("toolbar.modeVariables"), onSelect: () => onModeChange("variables") },
       ],
     },
     { label: t("menubar.arrange"), onSelect: onArrange },
@@ -304,9 +303,6 @@ export function Toolbar({
           </button>
           <button className={mode === "code" ? "active" : ""} onClick={() => onModeChange("code")}>
             {t("toolbar.modeCode")}
-          </button>
-          <button className={mode === "variables" ? "active" : ""} onClick={() => onModeChange("variables")}>
-            {t("toolbar.modeVariables")}
           </button>
         </div>
       </div>

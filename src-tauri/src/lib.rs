@@ -198,9 +198,12 @@ impl Drop for RunningGuard {
 /// froze the window for as long as the flow ran.
 /// `step_mode: true` starts the run already paused before its first
 /// step (the toolbar's "ステップ" command) instead of running freely
-/// until the first `Step.breakpoint` (a plain "実行").
+/// until the first `Step.breakpoint` (a plain "実行"). `start_step_id`,
+/// when given, is the canvas context menu's "ここから実行" —
+/// overrides the flow's own `entry` so the run starts at that step
+/// instead of the top.
 #[tauri::command]
-async fn run_flow_yaml(app: AppHandle, yaml: String, step_mode: bool) -> Result<(), String> {
+async fn run_flow_yaml(app: AppHandle, yaml: String, step_mode: bool, start_step_id: Option<String>) -> Result<(), String> {
     if FLOW_RUNNING.compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_err() {
         return Err("a flow is already running".to_string());
     }
@@ -208,7 +211,7 @@ async fn run_flow_yaml(app: AppHandle, yaml: String, step_mode: bool) -> Result<
     tauri::async_runtime::spawn_blocking(move || {
         let flow: Flow = parse_flow(&yaml).map_err(|e| e.to_string())?;
         let mut observer = TauriObserver { app };
-        engine::run_flow(&flow, &mut observer, step_mode).map_err(|f| format!("{}: {}", f.step_id, f.message))
+        engine::run_flow(&flow, &mut observer, step_mode, start_step_id.as_deref()).map_err(|f| format!("{}: {}", f.step_id, f.message))
     })
     .await
     .map_err(|e| e.to_string())?

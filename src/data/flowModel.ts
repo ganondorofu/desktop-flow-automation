@@ -85,6 +85,17 @@ export type TextOp =
   | "regex_test"
   | "regex_match";
 
+export function textOpPaletteKey(op: TextOp): string {
+  if (op === "uppercase" || op === "lowercase" || op === "trim") return "textFormat";
+  if (op === "replace") return "textReplace";
+  if (op === "substring" || op === "split") return "textExtract";
+  if (op === "length" || op === "contains" || op === "starts_with" || op === "ends_with") return "textCheck";
+  if (op === "base64_encode" || op === "base64_decode" || op === "json_escape") return "textEncode";
+  if (op === "md5" || op === "sha256") return "textHash";
+  if (op === "json_get") return "textJson";
+  return "textRegex";
+}
+
 /** `"Ctrl+Shift+A"`-style human-readable summary of a key + its held
  *  modifiers, for the canvas node preview and inspector title. */
 export function formatKeyCombo(key: string, modifiers: KeyModifiers): string {
@@ -105,9 +116,9 @@ const CALC_OP_SYMBOL: Record<CalcOp, string> = {
   subtract: "−",
   multiply: "×",
   divide: "÷",
-  round: "≈",
-  floor: "⌊⌋",
-  ceil: "⌈⌉",
+  round: "round",
+  floor: "floor",
+  ceil: "ceil",
 };
 
 /** How a `Browser*` step finds its element — mirrors
@@ -167,6 +178,14 @@ export type FailureBehavior = "fail" | "skip";
  *  entirely at run time. See crates/flow-schema's `Step::enabled`. */
 export type FlowNode = (
   | { id: string; kind: "start"; enabled: boolean }
+  /** A pure marker, like `start` — at most one per flow, top-level
+   *  only (both enforced by `App.tsx`'s `handleAddStep`, not by this
+   *  type). When the flow fails with an uncaught error, the engine
+   *  jumps to whatever this node's own plain output is wired to
+   *  instead of ending the run as failed — see
+   *  `crates/flow-schema/src/action.rs`'s `Action::ErrorHandler` doc
+   *  comment. Never triggered by the Stop button. */
+  | { id: string; kind: "error_handler"; enabled: boolean }
   | { id: string; kind: "wait"; seconds: number; enabled: boolean }
   | { id: string; kind: "set_variable"; name: string; value: string; enabled: boolean }
   | { id: string; kind: "calculate"; a: string; op: CalcOp; b: string; variable: string; enabled: boolean }
@@ -424,6 +443,7 @@ export type CanvasKind = "trigger" | "image" | "action" | "control";
 
 export const NODE_KIND_OF: Record<FlowNode["kind"], CanvasKind> = {
   start: "trigger",
+  error_handler: "trigger",
   wait: "control",
   set_variable: "control",
   calculate: "control",
@@ -728,6 +748,8 @@ export function describeNode(
   switch (node.kind) {
     case "start":
       return { title: paletteLabel(t, "start", mode), sub: kindLabel, body: "" };
+    case "error_handler":
+      return { title: paletteLabel(t, "errorHandler", mode), sub: kindLabel, body: "" };
     case "wait":
       return { title: paletteLabel(t, "wait", mode), sub: `${kindLabel} · ${t("inspector.fields.seconds")}`, body: `${node.seconds}s` };
     case "set_variable":
@@ -795,7 +817,7 @@ export function describeNode(
       return { title: paletteLabel(t, "getSystemInfo", mode), sub: kindLabel, body: picked.length > 0 ? `→ ${picked.join(", ")}` : "" };
     }
     case "text_transform":
-      return { title: paletteLabel(t, "textTransform", mode), sub: kindLabel, body: `${node.op}("${node.text}") → ${node.variable}` };
+      return { title: paletteLabel(t, textOpPaletteKey(node.op), mode), sub: kindLabel, body: `${node.op}("${node.text}") → ${node.variable}` };
     case "launch_app":
       return { title: paletteLabel(t, "launchApp", mode), sub: kindLabel, body: node.args ? `${node.path} ${node.args}` : node.path };
     case "open_url":

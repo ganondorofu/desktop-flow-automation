@@ -63,8 +63,14 @@ function connect() {
   // specific port that actually received the request avoids both.
   const replyPort = port;
   replyPort.onMessage.addListener(async (request) => {
-    console.log("[Relay Bridge] received command:", request);
+    // Deliberately not logging `params` here — for `set_value` (and
+    // anything else that carries a value the flow typed/read) that's
+    // exactly the kind of thing a password manager or login form
+    // would be putting through this extension, and the service
+    // worker's console is visible to anyone with DevTools open on
+    // this browser profile, not just this app's own developer.
     const { id, action, params } = request;
+    console.log("[Relay Bridge] received command:", { id, action });
     let message;
     try {
       const result = await runAction(action, params ?? {});
@@ -451,7 +457,13 @@ async function pageAction(action, params) {
           resolve();
         }
       });
-      observer.observe(document.documentElement, { childList: true, subtree: true });
+      // `attributes`/`characterData` cover a selector that starts
+      // matching because an *existing* element's attribute or text
+      // changed, not just because a new element was inserted — an
+      // attribute selector (`[data-state="ready"]`) or a text
+      // selector whose target text node updates in place would
+      // otherwise never re-trigger this observer and just time out.
+      observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
     });
   }
 

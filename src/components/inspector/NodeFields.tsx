@@ -32,26 +32,20 @@ function matchesPerfPreset(node: FlowNode & { kind: "find_image" }, preset: keyo
 
 const DATE_TIME_FORMATS: DateTimeFormat[] = ["iso8601", "date_only", "time_only", "unix_seconds"];
 
-const TEXT_OPS: TextOp[] = [
-  "uppercase",
-  "lowercase",
-  "trim",
-  "replace",
-  "substring",
-  "length",
-  "contains",
-  "starts_with",
-  "ends_with",
-  "split",
-  "base64_encode",
-  "base64_decode",
-  "md5",
-  "sha256",
-  "json_get",
-  "json_escape",
-  "regex_test",
-  "regex_match",
+const TEXT_OP_GROUPS: { key: string; ops: TextOp[] }[] = [
+  { key: "format", ops: ["uppercase", "lowercase", "trim"] },
+  { key: "replace", ops: ["replace"] },
+  { key: "extract", ops: ["substring", "split"] },
+  { key: "check", ops: ["length", "contains", "starts_with", "ends_with"] },
+  { key: "encode", ops: ["base64_encode", "base64_decode", "json_escape"] },
+  { key: "hash", ops: ["md5", "sha256"] },
+  { key: "json", ops: ["json_get"] },
+  { key: "regex", ops: ["regex_test", "regex_match"] },
 ];
+
+function textOpGroup(op: TextOp) {
+  return TEXT_OP_GROUPS.find((group) => group.ops.includes(op)) ?? TEXT_OP_GROUPS[0];
+}
 
 /** Which of `TextTransform`'s `arg1`/`arg2` fields a given `op`
  *  actually reads — see `flow_schema::TextOp`'s doc comment for what
@@ -1639,26 +1633,46 @@ export function NodeFields({
         </div>
       );
     }
-    case "text_transform":
+    case "text_transform": {
+      const group = textOpGroup(node.op);
       return (
         <>
           <div className="field">
-            <label>{t("inspector.fields.textTransformOp")}</label>
+            <label>{t("inspector.fields.textTransformGroup")}</label>
             <select
               className="num-input"
-              value={node.op}
+              value={group.key}
               onChange={(e) => {
-                const op = e.target.value as TextOp;
+                const op = TEXT_OP_GROUPS.find(({ key }) => key === e.target.value)?.ops[0] ?? "uppercase";
                 onChange((n) => (n.kind === "text_transform" ? { ...n, op } : n));
               }}
             >
-              {TEXT_OPS.map((op) => (
-                <option key={op} value={op}>
-                  {t(`inspector.fields.textOp${op.charAt(0).toUpperCase()}${op.slice(1).replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())}`)}
+              {TEXT_OP_GROUPS.map(({ key }) => (
+                <option key={key} value={key}>
+                  {t(`inspector.fields.textGroup${key.charAt(0).toUpperCase()}${key.slice(1)}`)}
                 </option>
               ))}
             </select>
           </div>
+          {group.ops.length > 1 && (
+            <div className="field">
+              <label>{t("inspector.fields.textTransformOp")}</label>
+              <select
+                className="num-input"
+                value={node.op}
+                onChange={(e) => {
+                  const op = e.target.value as TextOp;
+                  onChange((n) => (n.kind === "text_transform" ? { ...n, op } : n));
+                }}
+              >
+                {group.ops.map((op) => (
+                  <option key={op} value={op}>
+                    {t(`inspector.fields.textOp${op.charAt(0).toUpperCase()}${op.slice(1).replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase())}`)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label>{t("inspector.fields.text")}</label>
             <VariableTextArea
@@ -1703,6 +1717,7 @@ export function NodeFields({
           )}
         </>
       );
+    }
     case "call_function":
       return (
         <>

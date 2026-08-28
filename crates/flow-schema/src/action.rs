@@ -13,6 +13,20 @@ pub enum Action {
     /// is still valid — a flow simply isn't required to start at a
     /// `Start` step, only conventionally does).
     Start,
+    /// A pure marker, like `Start` — placed at most once, at the top
+    /// level of a flow (the frontend enforces both; nothing here
+    /// stops a hand-edited file from breaking either rule, but the
+    /// engine treats "first one found in `Flow.steps`" as the answer
+    /// either way rather than erroring on it). When the flow's main
+    /// run fails with an uncaught error, `runner::run_flow_with_backend`
+    /// looks for this step and, if found, runs whatever its own plain
+    /// output is wired to instead of ending the run as failed —
+    /// `caught_error`/`failed_step_id` are set in the flow's variables
+    /// first, the same way `TryCatch`'s `catch` branch sets
+    /// `caught_error`. Never triggered by a manual Stop (that's
+    /// `Signal::Stop`, an `Ok` outcome, not a `FlowFailure`) — only a
+    /// real step failure that would otherwise end the run.
+    ErrorHandler,
     Click {
         target: ClickTarget,
         #[serde(default)]

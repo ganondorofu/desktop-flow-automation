@@ -412,7 +412,7 @@ fn on_variables_changed_reflects_each_step_as_it_runs() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.last_variables.get("a"), Some(&"1".to_string()));
     assert_eq!(observer.last_variables.get("b"), Some(&"2".to_string()));
@@ -435,7 +435,7 @@ fn runs_a_wait_only_flow_to_completion() {
     };
 
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
 }
 
@@ -451,7 +451,7 @@ fn reports_progress_through_the_observer() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(observer.started, vec!["one", "two"]);
 }
 
@@ -469,7 +469,7 @@ fn a_step_with_no_incoming_connection_never_runs() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(observer.started, vec!["start"]);
 }
 
@@ -484,7 +484,7 @@ fn a_flow_with_no_entry_runs_nothing() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert!(observer.started.is_empty());
 }
 
@@ -514,7 +514,7 @@ fn a_circular_connection_fails_instead_of_looping_forever() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
     // Both steps ran once before the cycle was caught on the
     // second visit to "a" — proves this terminates rather than
@@ -570,7 +570,7 @@ fn if_takes_the_yes_path_when_the_variable_matches() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(
         observer.started,
         vec!["remember_found", "check_found", "then_branch"]
@@ -609,7 +609,7 @@ fn if_takes_the_no_path_when_the_variable_is_unset() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(observer.started, vec!["check_found", "else_branch"]);
 }
 
@@ -647,7 +647,7 @@ fn after_either_if_branch_finishes_execution_continues_from_the_if_step() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(
         observer.started,
         vec!["check_found", "else_branch", "after_if"]
@@ -678,7 +678,7 @@ fn loop_runs_its_body_the_requested_number_of_times() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(
         observer.started,
         vec!["retry_loop", "inner", "inner", "inner"]
@@ -715,7 +715,7 @@ fn a_failure_inside_a_loop_stops_the_flow() {
     let mut observer = RecordingObserver::new();
     // Always-failing backend: the very first click inside the loop fails.
     let backend = MockBackend::fails_first(u32::MAX);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_err());
     assert!(!observer.started.contains(&"never_reached".to_string()));
 }
@@ -741,7 +741,7 @@ fn retry_policy_recovers_from_a_transient_failure() {
     // Fails twice, then succeeds on the third attempt — within the
     // step's max_attempts of 3, so the flow should still succeed.
     let backend = MockBackend::fails_first(2);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 3);
 }
@@ -765,7 +765,7 @@ fn retry_policy_gives_up_after_max_attempts() {
 
     let mut observer = NullObserver;
     let backend = MockBackend::fails_first(u32::MAX);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_err());
     assert_eq!(backend.click_calls.get(), 2);
 }
@@ -795,7 +795,7 @@ fn on_failure_skip_reports_the_failure_but_continues_to_the_next_step() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::fails_first(u32::MAX);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(observer.started, vec!["click_broken_button", "after"]);
 }
@@ -827,7 +827,7 @@ fn clicking_by_element_goes_through_click_element_not_click() {
 
     let mut observer = NullObserver;
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 1);
 }
@@ -862,7 +862,7 @@ fn find_image_retries_until_found_then_a_branch_can_use_it() {
     let mut observer = NullObserver;
     // Not found on the first two captures, found on the third.
     let backend = MockBackend::fails_first(2);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 3);
 }
@@ -910,7 +910,7 @@ fn move_mouse_targeting_last_match_uses_the_most_recent_find_image_result() {
 
     let mut observer = NullObserver;
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.last_point.get(), (42, 24));
 }
@@ -937,7 +937,7 @@ fn move_mouse_targeting_last_match_fails_when_nothing_found_yet() {
     };
 
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
 }
 
@@ -974,7 +974,7 @@ fn find_image_fails_the_flow_when_never_found() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::fails_first(u32::MAX);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_err());
     assert!(!observer.started.contains(&"never_reached".to_string()));
 }
@@ -1017,7 +1017,7 @@ fn move_mouse_and_key_press_run_without_error() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.started, vec!["move_1", "hold_shift"]);
 }
@@ -1050,7 +1050,7 @@ fn an_unreleased_held_key_is_force_released_when_the_run_ends() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(*backend.key_release_calls.borrow(), vec!["ctrl".to_string()]);
 }
@@ -1093,7 +1093,7 @@ fn a_key_press_with_a_matching_release_is_only_released_once() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(*backend.key_release_calls.borrow(), vec!["ctrl".to_string()]);
 }
@@ -1125,7 +1125,7 @@ fn a_disabled_step_is_skipped_but_the_chain_continues() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     // The disabled step never starts, and — critically — its click
     // never reaches the backend, proving it's truly skipped rather
@@ -1156,7 +1156,7 @@ fn a_stop_step_ends_the_flow_early_without_failing() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     // Ending early on purpose is a success, not a failure.
     assert!(result.is_ok());
     assert_eq!(observer.started, vec!["before", "stop_here"]);
@@ -1200,7 +1200,7 @@ fn a_stop_step_inside_a_loop_body_ends_the_whole_run() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     // Only the first iteration ran — no second "inner", and the
     // step after the loop never runs either.
@@ -1232,7 +1232,7 @@ fn wait_for_window_retries_until_the_window_exists() {
     let mut observer = NullObserver;
     // Not open on the first two checks, open by the third.
     let backend = MockBackend::fails_first(2);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 3);
 }
@@ -1265,7 +1265,7 @@ fn wait_for_window_fails_the_flow_when_it_never_appears() {
 
     let mut observer = RecordingObserver::new();
     let backend = MockBackend::fails_first(u32::MAX);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_err());
     assert!(!observer.started.contains(&"never_reached".to_string()));
 }
@@ -1317,7 +1317,7 @@ fn get_element_text_writes_into_a_variable_the_flow_can_branch_on() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(observer.started, vec!["read_label", "check_text", "matched"]);
 }
 
@@ -1366,7 +1366,7 @@ fn browser_get_text_writes_into_a_variable() {
     };
 
     let mut observer = RecordingObserver::new();
-    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false).unwrap();
+    run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None).unwrap();
     assert_eq!(observer.started, vec!["read_price", "check_price", "matched"]);
 }
 
@@ -1395,7 +1395,7 @@ fn browser_wait_for_selector_retries_until_it_shows_up() {
 
     let mut observer = NullObserver;
     let backend = MockBackend::fails_first(2);
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 3);
 }
@@ -1463,7 +1463,7 @@ fn calculate_dividing_by_zero_fails_the_step_instead_of_producing_inf() {
         step_delay_ms: 0,
     };
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
 }
 
@@ -1528,7 +1528,7 @@ fn calculate_rounding_with_negative_decimal_places_fails_the_step() {
         step_delay_ms: 0,
     };
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
 }
 
@@ -1547,7 +1547,7 @@ fn a_monitor_change_mid_run_pauses_and_then_resumes_once_restored() {
         step_delay_ms: 0,
     };
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::mismatched_monitor_once(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::mismatched_monitor_once(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.monitor_mismatches, 1);
     assert_eq!(observer.monitor_restores, 1);
@@ -1575,7 +1575,7 @@ fn a_disabled_step_never_pauses_even_with_a_breakpoint() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.paused_at, Vec::<String>::new());
     assert_eq!(observer.resumes, 0);
@@ -1728,7 +1728,7 @@ fn call_function_runs_the_named_functions_body_and_returns_to_the_caller() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     // "greet_fn" itself never runs (nothing wires into it) — only its
     // body, via the call, then whatever follows the call step.
@@ -1779,7 +1779,7 @@ fn call_function_runs_again_from_a_second_unrelated_call_site() {
 
     let mut observer = NullObserver;
     let backend = MockBackend::always_succeeds();
-    let result = run_flow_with_backend(&flow, &mut observer, &backend, false);
+    let result = run_flow_with_backend(&flow, &mut observer, &backend, false, None);
     assert!(result.is_ok());
     assert_eq!(backend.click_calls.get(), 2);
 }
@@ -1801,7 +1801,7 @@ fn call_function_fails_the_flow_when_the_name_is_undefined() {
     };
 
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("does_not_exist"));
 }
@@ -1849,7 +1849,7 @@ fn call_function_fails_when_it_recurses_into_itself() {
     };
 
     let mut observer = NullObserver;
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_err());
     assert!(result.unwrap_err().message.contains("recursive"));
 }
@@ -1890,7 +1890,7 @@ fn break_ends_the_loop_immediately() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.started.iter().filter(|id| *id == "iter").count(), 1);
 }
@@ -1925,7 +1925,7 @@ fn continue_skips_the_rest_of_the_current_iteration_only() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.started.iter().filter(|id| *id == "each_iter").count(), 3);
     assert!(!observer.started.contains(&"never_reached".to_string()));
@@ -1965,7 +1965,7 @@ fn return_ends_the_function_call_but_the_caller_continues() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert!(observer.started.contains(&"before_return".to_string()));
     assert!(!observer.started.contains(&"never_reached".to_string()));
@@ -2016,7 +2016,7 @@ fn return_inside_a_loop_still_returns_the_whole_function() {
     };
 
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.started.iter().filter(|id| *id == "loop_iter").count(), 1);
     assert!(!observer.started.contains(&"never_reached".to_string()));
@@ -2061,7 +2061,7 @@ fn text_transform_covers_a_few_representative_operations() {
             step_delay_ms: 0,
         };
         let mut observer = RecordingObserver::new();
-        let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+        let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
         assert!(result.is_ok());
         assert_eq!(observer.last_variables.get("result"), Some(&expected.to_string()));
     }
@@ -2081,11 +2081,62 @@ fn generate_random_stays_within_the_requested_range() {
     };
     for _ in 0..20 {
         let mut observer = RecordingObserver::new();
-        let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+        let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
         assert!(result.is_ok());
         let value: i64 = observer.last_variables.get("roll").expect("roll should be set").parse().expect("should be a number");
         assert!((1..=6).contains(&value), "rolled {value}, expected 1..=6");
     }
+}
+
+#[test]
+fn error_handler_runs_after_an_uncaught_failure_and_recovers_the_run() {
+    let flow = Flow {
+        name: "test".into(),
+        steps: vec![
+            action_step("calc", Action::Calculate { a: "1".into(), op: CalcOp::Divide, b: "0".into(), variable: "r".into() }),
+            action_step("handler", Action::ErrorHandler),
+            action_step("recover", Action::SetVariable { name: "recovered".into(), value: "yes".into() }),
+        ],
+        connections: vec![Connection { from: "handler".into(), from_port: None, to: "recover".into() }],
+        entry: Some("calc".into()),
+        step_delay_ms: 0,
+    };
+    let mut observer = RecordingObserver::new();
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
+    assert!(result.is_ok(), "the error handler should have turned the failure into a successful run: {result:?}");
+    assert_eq!(observer.last_variables.get("recovered"), Some(&"yes".to_string()));
+    assert_eq!(observer.last_variables.get("failed_step_id"), Some(&"calc".to_string()));
+    assert!(observer.last_variables.get("caught_error").is_some_and(|m| !m.is_empty()));
+}
+
+#[test]
+fn error_handler_is_not_triggered_by_a_manual_stop() {
+    let flow = Flow {
+        name: "test".into(),
+        steps: vec![action_step("s", Action::Stop), action_step("handler", Action::ErrorHandler), action_step("recover", Action::SetVariable { name: "recovered".into(), value: "yes".into() })],
+        connections: vec![Connection { from: "handler".into(), from_port: None, to: "recover".into() }],
+        entry: Some("s".into()),
+        step_delay_ms: 0,
+    };
+    let mut observer = RecordingObserver::new();
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
+    assert!(result.is_ok());
+    assert_eq!(observer.last_variables.get("recovered"), None, "Action::Stop is a normal end, not a failure — the handler must not run");
+}
+
+#[test]
+fn run_flow_with_backend_can_start_from_an_arbitrary_step() {
+    let flow = Flow {
+        name: "test".into(),
+        steps: vec![action_step("a", Action::Wait { seconds: 0.0 }), action_step("b", Action::Wait { seconds: 0.0 })],
+        connections: vec![],
+        entry: Some("a".into()),
+        step_delay_ms: 0,
+    };
+    let mut observer = RecordingObserver::new();
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, Some("b"));
+    assert!(result.is_ok());
+    assert_eq!(observer.started, vec!["b".to_string()], "should have started at 'b', not the flow's own entry 'a'");
 }
 
 #[test]
@@ -2101,7 +2152,7 @@ fn get_env_var_writes_into_a_variable() {
         step_delay_ms: 0,
     };
     let mut observer = RecordingObserver::new();
-    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false, None);
     assert!(result.is_ok());
     assert_eq!(observer.last_variables.get("path_value"), Some(&"mock-PATH".to_string()));
 }

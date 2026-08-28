@@ -80,6 +80,8 @@ function parseStepAction(raw: unknown): FlowNode {
   switch (type) {
     case "start":
       return { id, kind: "start", enabled };
+    case "error_handler":
+      return { id, kind: "error_handler", enabled };
     case "wait":
       return { id, kind: "wait", seconds: Number(s.seconds), enabled };
     case "set_variable":

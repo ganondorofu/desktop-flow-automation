@@ -90,6 +90,8 @@ function nodeActionYamlLines(node: FlowNode, indent: string, head: string): stri
   switch (node.kind) {
     case "start":
       return [head, `${indent}  type: start`];
+    case "error_handler":
+      return [head, `${indent}  type: error_handler`];
     case "wait":
       return [head, `${indent}  type: wait`, `${indent}  seconds: ${node.seconds}`];
     case "set_variable":

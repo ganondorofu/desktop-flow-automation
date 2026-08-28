@@ -56,6 +56,11 @@ fn manifest_path() -> std::io::Result<std::path::PathBuf> {
 /// launches exactly that path with no extra arguments, so it can't be
 /// this app's exe plus a flag telling it to behave differently.
 pub fn register(native_host_exe: &std::path::Path) -> std::io::Result<()> {
+    // Also tells `identify::is_registered_native_host` what a
+    // legitimate pipe connection's exe path should look like — see
+    // that function's doc comment for why a full-path comparison
+    // instead of a name-only one.
+    crate::identify::set_expected_native_host_path(native_host_exe);
     let manifest = serde_json::json!({
         "name": HOST_NAME,
         "description": "Relay Bridge native messaging host",

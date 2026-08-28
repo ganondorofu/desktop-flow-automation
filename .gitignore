@@ -15,6 +15,8 @@ dist-ssr
 # Rust
 /target
 crates/*/target
+demo/apps/relay-data-desk/bin
+demo/apps/relay-data-desk/obj
 
 # Editor directories and files
 .vscode/*

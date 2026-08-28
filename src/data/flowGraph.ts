@@ -96,6 +96,8 @@ export function makeLeaf(kind: LeafKind): FlowNode {
   switch (kind) {
     case "start":
       return { id, kind, enabled: true };
+    case "error_handler":
+      return { id, kind, enabled: true };
     case "wait":
       return { id, kind, seconds: 1, enabled: true };
     case "set_variable":
@@ -306,42 +308,61 @@ const VARIABLE_OUTPUT_KINDS = new Set<FlowNode["kind"]>([
   "generate_random",
 ]);
 
-/** Every variable name any step in the graph could have written by
- *  the time it runs — every `VARIABLE_OUTPUT_KINDS` step's
- *  `variable`, `set_variable.name`, `http`'s `_status` companion, and
- *  the fixed names `find_image` (`last_match_x`/`y`/`score`) and
- *  `try_catch` (`caught_error`) always write to when one exists
- *  anywhere in the graph. Feeds both the "insert variable" picker on
- *  text fields (the `%name%` interpolation `resolve()` on the Rust
- *  side substitutes at run time) and the variables panel — this isn't
- *  data-flow analysis, just "every name written anywhere", same as
- *  PAD's flat variable list. */
-export function collectVariableNames(branch: Branch, acc: Set<string> = new Set()): string[] {
-  for (const n of branch.steps) {
-    if (n.kind === "set_variable") acc.add(n.name);
-    else if (VARIABLE_OUTPUT_KINDS.has(n.kind) && "variable" in n) {
-      if (n.variable) acc.add(n.variable);
-      if (n.kind === "http" && n.statusVariable) acc.add(n.statusVariable);
-      if (n.kind === "http_download" && n.pathVariable) acc.add(n.pathVariable);
-    } else if (n.kind === "get_system_info") {
-      for (const name of [n.hostname, n.osVersion, n.cpuPercent, n.memoryPercent, n.ipAddress]) {
-        if (name) acc.add(name);
-      }
-    } else if (n.kind === "ping") {
-      if (n.variable) {
-        acc.add(n.variable);
-        acc.add(`${n.variable}_latency_ms`);
-      }
-    } else if (n.kind === "find_image") {
-      acc.add("last_match_x");
-      acc.add("last_match_y");
-      acc.add("last_match_score");
-    } else if (n.kind === "try_catch") {
-      acc.add("caught_error");
+export interface VariableDefinition {
+  name: string;
+  sourceNodeIds: string[];
+  automatic: boolean;
+}
+
+/** Variables a flow can write, together with the steps that create
+ *  them. Fixed companion outputs are marked automatic so the UI can
+ *  distinguish them from names the user can edit in an Inspector. */
+export function collectVariableDefinitions(branch: Branch): VariableDefinition[] {
+  const definitions = new Map<string, VariableDefinition>();
+
+  function add(name: string, sourceNodeId: string, automatic = false) {
+    if (!name) return;
+    const current = definitions.get(name);
+    if (current) {
+      if (!current.sourceNodeIds.includes(sourceNodeId)) current.sourceNodeIds.push(sourceNodeId);
+      current.automatic = current.automatic && automatic;
+      return;
     }
-    for (const child of childBranches(n)) collectVariableNames(child, acc);
+    definitions.set(name, { name, sourceNodeIds: [sourceNodeId], automatic });
   }
-  return Array.from(acc);
+
+  function walk(current: Branch) {
+    for (const n of current.steps) {
+      if (n.kind === "set_variable") add(n.name, n.id);
+      else if (VARIABLE_OUTPUT_KINDS.has(n.kind) && "variable" in n) {
+        if (n.variable) add(n.variable, n.id);
+        if (n.kind === "http" && n.statusVariable) add(n.statusVariable, n.id);
+        if (n.kind === "http_download" && n.pathVariable) add(n.pathVariable, n.id);
+      } else if (n.kind === "get_system_info") {
+        for (const name of [n.hostname, n.osVersion, n.cpuPercent, n.memoryPercent, n.ipAddress]) add(name, n.id);
+      } else if (n.kind === "ping" && n.variable) {
+        add(n.variable, n.id);
+        add(`${n.variable}_latency_ms`, n.id, true);
+      } else if (n.kind === "find_image") {
+        add("last_match_found", n.id, true);
+        add("last_match_x", n.id, true);
+        add("last_match_y", n.id, true);
+        add("last_match_score", n.id, true);
+      } else if (n.kind === "try_catch") {
+        add("caught_error", n.id, true);
+      }
+      for (const child of childBranches(n)) walk(child);
+    }
+  }
+
+  walk(branch);
+  return Array.from(definitions.values());
+}
+
+/** Every variable name any step in the graph could write. Feeds the
+ *  variable insertion controls as well as the variables workspace. */
+export function collectVariableNames(branch: Branch): string[] {
+  return collectVariableDefinitions(branch).map(({ name }) => name);
 }
 
 /** Every `function_def` node's `name`, anywhere in the graph — feeds
@@ -360,17 +381,22 @@ export function collectFunctionNames(branch: Branch, acc: Set<string> = new Set(
   return Array.from(acc);
 }
 
-/** Step kinds that can affect the machine outside the flow itself —
- *  running another program, deleting/overwriting a file, ending a
- *  process, downloading and saving arbitrary content, shutting down/
- *  restarting, or reading an environment variable that might hold a
- *  secret. Not "unsafe to automate" (that's the whole point of this
- *  app) — just worth a one-time heads-up when opening a `.relay` file
- *  from somewhere other than this app's own Save, the same way a
- *  downloaded script or macro warrants a first look before running.
- *  Deliberately not `write_file` with `append: true` — appending to a
- *  file the flow's own note-taking already knows about doesn't carry
- *  the same "could clobber something" risk delete/overwrite does. */
+/** Step kinds worth calling out by name in the open-flow warning
+ *  (see `App.tsx`'s `confirmDangerousFlow`) when present — running
+ *  another program, deleting/overwriting a file, ending a process,
+ *  reading a file/the clipboard/an environment variable that might
+ *  hold something sensitive, making an HTTP request (including a
+ *  POST — the read-then-send-it-out combination is exactly how a
+ *  malicious flow would exfiltrate whatever it just read), moving a
+ *  file, opening a URL, or shutting down/restarting. This list is
+ *  illustrative, not the security boundary itself: `App.tsx` confirms
+ *  *every* externally-opened flow once, regardless of what's in it,
+ *  because any new action kind added later (or any combination this
+ *  list doesn't happen to enumerate) would otherwise silently bypass
+ *  a purely blacklist-based check. Deliberately not `write_file` with
+ *  `append: true` — appending to a file the flow's own note-taking
+ *  already knows about doesn't carry the same "could clobber
+ *  something" risk delete/overwrite does. */
 export function dangerousActionKinds(branch: Branch, acc: Set<FlowNode["kind"]> = new Set()): FlowNode["kind"][] {
   for (const n of branch.steps) {
     if (
@@ -380,6 +406,11 @@ export function dangerousActionKinds(branch: Branch, acc: Set<FlowNode["kind"]> 
       n.kind === "power_action" ||
       n.kind === "http_download" ||
       n.kind === "get_env_var" ||
+      n.kind === "read_file" ||
+      n.kind === "read_clipboard" ||
+      n.kind === "http" ||
+      n.kind === "move_file" ||
+      n.kind === "open_url" ||
       (n.kind === "write_file" && !n.append)
     ) {
       acc.add(n.kind);

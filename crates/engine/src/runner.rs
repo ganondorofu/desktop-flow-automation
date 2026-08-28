@@ -37,15 +37,25 @@ pub fn run_flow(
     flow: &Flow,
     observer: &mut dyn ExecutionObserver,
     step_mode: bool,
+    start_step_id: Option<&str>,
 ) -> Result<(), FlowFailure> {
-    run_flow_with_backend(flow, observer, &WindowsBackend, step_mode)
+    run_flow_with_backend(flow, observer, &WindowsBackend, step_mode, start_step_id)
 }
 
+/// `start_step_id`, when given, overrides `flow.entry` as where
+/// execution begins — the "run from here" context-menu command, which
+/// re-runs the exact same flow but starting partway through instead
+/// of from the top. Variables/`last_match`/held keys are otherwise
+/// fresh, same as any other run — a step downstream that depends on
+/// something an upstream step would normally have set still needs
+/// that upstream step to have actually run first in this same launch
+/// (nothing here replays skipped steps' side effects).
 pub fn run_flow_with_backend(
     flow: &Flow,
     observer: &mut dyn ExecutionObserver,
     backend: &dyn AutomationBackend,
     step_mode: bool,
+    start_step_id: Option<&str>,
 ) -> Result<(), FlowFailure> {
     clear_stop();
     reset_debug_state(step_mode);
@@ -63,14 +73,21 @@ pub fn run_flow_with_backend(
         functions,
         ..Default::default()
     };
-    let result = run_branch(
-        &flow.steps,
-        &flow.connections,
-        flow.entry.as_deref(),
-        &mut ctx,
-        observer,
-        backend,
-    );
+    let entry = start_step_id.or(flow.entry.as_deref());
+    let mut result = run_branch(&flow.steps, &flow.connections, entry, &mut ctx, observer, backend);
+    // An uncaught failure gets one more chance: if the flow has an
+    // `ErrorHandler` step, jump to whatever it's wired to instead of
+    // ending the run as failed — see `Action::ErrorHandler`'s doc
+    // comment. Only for a real failure (`Err`), never for a `Stop`
+    // (manual or from `Action::Stop`), which is already `Ok`. If the
+    // handler branch itself fails, *that* failure is what's reported.
+    if let Err(failure) = &result {
+        if let Some(handler_next) = error_handler_entry(&flow.steps, &flow.connections) {
+            ctx.variables.insert("caught_error".into(), failure.message.clone());
+            ctx.variables.insert("failed_step_id".into(), failure.step_id.clone());
+            result = run_branch(&flow.steps, &flow.connections, Some(handler_next), &mut ctx, observer, backend);
+        }
+    }
     // Runs regardless of success, failure, or a mid-run Stop — a
     // `KeyPress` step with `mode: Press` and no matching `Release`
     // (skipped by a `Stop`, an `if` that took the other branch, the
@@ -81,6 +98,15 @@ pub fn run_flow_with_backend(
     }
     result?;
     Ok(())
+}
+
+/// The step id an `Action::ErrorHandler` marker's own plain output is
+/// wired to, if the flow has one — `None` if there's no such step, or
+/// it exists but has nothing connected after it (nothing meaningful
+/// to jump to).
+fn error_handler_entry<'a>(steps: &'a [Step], connections: &'a [Connection]) -> Option<&'a str> {
+    let handler = steps.iter().find(|s| matches!(s.action, Action::ErrorHandler))?;
+    next_step_id(connections, &handler.id, None)
 }
 
 /// Walks one container (the top-level flow, or an `if`/`loop`
@@ -317,6 +343,12 @@ fn run_action(
     match action {
         // Pure marker — see the doc comment on `Action::Start`.
         Action::Start => Ok(Signal::Continue),
+        // Pure marker reached only via normal wiring (someone
+        // connected something ahead of it, or ran the flow starting
+        // from it directly) — its real behavior, jumping here after
+        // an uncaught failure, is handled entirely in
+        // `run_flow_with_backend`, not here.
+        Action::ErrorHandler => Ok(Signal::Continue),
         // Ends the run right here — see the doc comment on `Action::Stop`.
         Action::Stop => Ok(Signal::Stop),
         Action::Break => Ok(Signal::BreakLoop),

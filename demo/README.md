@@ -9,6 +9,8 @@
 - `site/order.html` — 数量・メモを入力して発注するデモフォーム（送信するとその場で受付番号を生成）
 - `serve.cjs` — 上記2ページをローカル配信する簡易サーバー（依存パッケージなし、ローカルで試す場合用）
 - `flow/price-and-order-demo.relay` — デモ用のRelayフロー
+- `site/canvas-inventory.html` — DOM部品を持たないCanvas製の入力先アプリ（現状どのフローからも使われていない）
+- `apps/relay-data-desk/app/RelayDataDesk.exe` — ログインとデータ取得を行うデスクトップアプリ（現状どのフローからも使われていない）
 
 `site/` は GitHub Pages で公開済み: https://ganondorofu.github.io/desktop-flow-automation/
 （`demo/site/` へのpushで `.github/workflows/deploy-demo-pages.yml` が自動デプロイする）

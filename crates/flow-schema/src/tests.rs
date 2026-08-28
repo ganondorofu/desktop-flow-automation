@@ -519,6 +519,28 @@ fn roundtrips_a_start_step() {
 }
 
 #[test]
+fn roundtrips_an_error_handler_step() {
+    let flow = Flow {
+        name: "test".into(),
+        steps: vec![Step {
+            id: "handler_1".into(),
+            action: Action::ErrorHandler,
+            retry: RetryPolicy::default(),
+            enabled: true,
+            breakpoint: false,
+        }],
+        connections: vec![],
+        entry: Some("handler_1".into()),
+        step_delay_ms: 0,
+    };
+
+    let yaml = to_yaml(&flow).expect("serialize");
+    assert!(yaml.contains("type: error_handler"));
+    let parsed = parse_flow(&yaml).expect("deserialize");
+    assert_eq!(flow, parsed);
+}
+
+#[test]
 fn roundtrips_a_stop_step() {
     let flow = Flow {
         name: "test".into(),

@@ -16,8 +16,10 @@ import {
   Type,
   Info,
   MessageSquare,
+  Database,
+  Braces,
 } from "lucide-react";
-import { paletteLabel, type FlowNode, type NodeNameMode } from "../data/flowModel";
+import { paletteLabel, type FlowNode, type NodeNameMode, type TextOp } from "../data/flowModel";
 import { resources } from "../i18n/resources";
 
 /** Every label a palette item could be found under — both node-name
@@ -53,14 +55,20 @@ const GROUPS: {
     | "network"
     | "browser"
     | "text"
-    | "control";
+    | "flow"
+    | "data"
+    | "functions";
   icon: typeof Clock;
   kind: "trigger" | "image" | "action" | "control";
   items: string[];
 }[] = [
   // "start" isn't listed here — every flow already has exactly one
   // (auto-created, never deletable; see `ensureStartNode`), so
-  // there's nothing left for the palette to add.
+  // there's nothing left for the palette to add. "errorHandler" IS
+  // listed (in "flow" below) despite being just as single-instance —
+  // unlike `start` it doesn't exist until the user actually wants
+  // one, so it has to be reachable from somewhere; `App.tsx`'s
+  // `handleAddStep` blocks adding a second one instead.
   { heading: "triggers", icon: Clock, kind: "trigger", items: ["hotkey", "schedule"] },
   { heading: "vision", icon: Crosshair, kind: "image", items: ["findImageAi", "findTextOcr", "waitForImage", "screenshot"] },
   {
@@ -114,7 +122,7 @@ const GROUPS: {
     heading: "text",
     icon: Type,
     kind: "control",
-    items: ["textTransform"],
+    items: ["textFormat", "textReplace", "textExtract", "textCheck", "textEncode", "textHash", "textJson", "textRegex"],
   },
   {
     heading: "files",
@@ -142,28 +150,9 @@ const GROUPS: {
       "browserScreenshot",
     ],
   },
-  {
-    // Branching/looping first (what most people reach for), then data
-    // (variable/calc), then plain flow control (wait/stop) last.
-    heading: "control",
-    icon: GitBranch,
-    kind: "control",
-    items: [
-      "ifElse",
-      "loop",
-      "tryCatch",
-      "functionDef",
-      "callFunction",
-      "setVariable",
-      "calculate",
-      "generateRandom",
-      "wait",
-      "stop",
-      "break",
-      "continue",
-      "return",
-    ],
-  },
+  { heading: "flow", icon: GitBranch, kind: "control", items: ["ifElse", "loop", "tryCatch", "errorHandler", "wait", "stop", "break", "continue"] },
+  { heading: "data", icon: Database, kind: "control", items: ["setVariable", "calculate", "generateRandom"] },
+  { heading: "functions", icon: Braces, kind: "control", items: ["functionDef", "callFunction", "return"] },
 ];
 
 /** Only these palette items map to an action the engine actually
@@ -181,6 +170,7 @@ const GROUPS: {
 /// separate palette entry.
 const IMPLEMENTED: Partial<Record<string, FlowNode["kind"]>> = {
   start: "start",
+  errorHandler: "error_handler",
   click: "click",
   moveMouse: "move_mouse",
   typeText: "type_text",
@@ -239,7 +229,14 @@ const IMPLEMENTED: Partial<Record<string, FlowNode["kind"]>> = {
   return: "return",
   getDateTime: "get_date_time",
   getSystemInfo: "get_system_info",
-  textTransform: "text_transform",
+  textFormat: "text_transform",
+  textReplace: "text_transform",
+  textExtract: "text_transform",
+  textCheck: "text_transform",
+  textEncode: "text_transform",
+  textHash: "text_transform",
+  textJson: "text_transform",
+  textRegex: "text_transform",
 };
 
 /// "Wait for image" isn't a separate action from `findImageAi` under
@@ -253,6 +250,17 @@ const IMPLEMENTED: Partial<Record<string, FlowNode["kind"]>> = {
 /// attempts). Still just a `find_image` node underneath; the
 /// Inspector's retry fields can be changed at any time.
 const WAIT_FOR_IMAGE_RETRY_PRESET: Partial<FlowNode> = { retryMaxAttempts: 100_000, retryIntervalMs: 500 };
+
+const TEXT_TRANSFORM_PRESETS: Record<string, { op: TextOp }> = {
+  textFormat: { op: "uppercase" },
+  textReplace: { op: "replace" },
+  textExtract: { op: "substring" },
+  textCheck: { op: "contains" },
+  textEncode: { op: "base64_encode" },
+  textHash: { op: "sha256" },
+  textJson: { op: "json_get" },
+  textRegex: { op: "regex_match" },
+};
 
 interface PaletteProps {
   onAddStep: (kind: FlowNode["kind"], preset?: Partial<FlowNode>) => void;
@@ -275,7 +283,9 @@ export function Palette({ onAddStep, nodeNameMode, onNodeNameModeChange }: Palet
     network: true,
     browser: true,
     text: true,
-    control: true,
+    flow: true,
+    data: true,
+    functions: true,
   });
   const [query, setQuery] = useState("");
 
@@ -341,7 +351,13 @@ export function Palette({ onAddStep, nodeNameMode, onNodeNameModeChange }: Palet
                         key={item}
                         disabled={!enabled}
                         title={enabled ? undefined : t("palette.notImplemented")}
-                        onClick={() => stepKind && onAddStep(stepKind, item === "waitForImage" ? WAIT_FOR_IMAGE_RETRY_PRESET : undefined)}
+                        onClick={() =>
+                          stepKind &&
+                          onAddStep(
+                            stepKind,
+                            item === "waitForImage" ? WAIT_FOR_IMAGE_RETRY_PRESET : TEXT_TRANSFORM_PRESETS[item],
+                          )
+                        }
                       >
                         <span className="pal-dot" />
                         <span>{paletteLabel(t, item, nodeNameMode)}</span>

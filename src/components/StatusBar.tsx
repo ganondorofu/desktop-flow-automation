@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
-import { Grid2x2, Check, Loader2, AlertTriangle, Pause, ScrollText } from "lucide-react";
+import { Activity, AlertTriangle, Check, ChevronDown, ChevronUp, Grid2x2, Loader2, Pause, Variable } from "lucide-react";
+import { CopyButton } from "./CopyButton";
 
 export type RunState =
   | { status: "idle" }
@@ -22,11 +23,39 @@ interface StatusBarProps {
   zoomPercent: number;
   monitorPaused: boolean;
   debugPaused: boolean;
-  onOpenLogViewer: () => void;
+  executionWidgetOpen: boolean;
+  knownVariableCount: number;
+  variableCount: number;
+  onToggleExecutionWidget: () => void;
 }
 
-export function StatusBar({ runState, log, elapsedMs, zoomPercent, monitorPaused, debugPaused, onOpenLogViewer }: StatusBarProps) {
+export function StatusBar({
+  runState,
+  log,
+  elapsedMs,
+  zoomPercent,
+  monitorPaused,
+  debugPaused,
+  executionWidgetOpen,
+  knownVariableCount,
+  variableCount,
+  onToggleExecutionWidget,
+}: StatusBarProps) {
   const { t } = useTranslation();
+  const latest = log.at(-1);
+  const latestText = latest
+    ? latest.kind === "start"
+      ? t("statusbar.stepStarted", { id: latest.stepId })
+      : latest.kind === "done"
+        ? t("statusbar.stepDone", { id: latest.stepId })
+        : latest.kind === "error"
+          ? t("statusbar.stepFailed", { id: latest.stepId, message: latest.message })
+          : latest.kind === "monitor-mismatch"
+            ? t("statusbar.monitorMismatchLog")
+            : latest.kind === "monitor-restored"
+              ? t("statusbar.monitorRestoredLog")
+              : t("statusbar.pausedAtStep", { id: latest.stepId })
+    : t("statusbar.idleLog");
 
   return (
     <div className="statusbar">
@@ -36,38 +65,22 @@ export function StatusBar({ runState, log, elapsedMs, zoomPercent, monitorPaused
       </div>
       <div className="sb-sep" />
 
-      <button className="sb-log-viewer-btn" onClick={onOpenLogViewer} title={t("logViewer.open")} aria-label={t("logViewer.open")}>
-        <ScrollText size={12} strokeWidth={1.9} aria-hidden="true" />
+      <button
+        type="button"
+        className={`sb-execution-toggle ${runState.status === "error" ? "error" : ""}`}
+        onClick={onToggleExecutionWidget}
+        aria-expanded={executionWidgetOpen}
+        aria-controls="execution-widget"
+      >
+        <Activity size={12} strokeWidth={1.9} aria-hidden="true" />
+        <strong>{t("executionWidget.title")}</strong>
+        <span className="sb-execution-latest">{latestText}</span>
+        <span className="sb-variable-count">
+          <Variable size={11} strokeWidth={1.9} aria-hidden="true" />
+          {knownVariableCount}/{variableCount}
+        </span>
+        {executionWidgetOpen ? <ChevronDown size={13} aria-hidden="true" /> : <ChevronUp size={13} aria-hidden="true" />}
       </button>
-
-      <div className="sb-log">
-        {log.length === 0 ? (
-          <span className="sb-log-line">{t("statusbar.idleLog")}</span>
-        ) : (
-          log.slice(-4).map((entry) => (
-            <span className={`sb-log-line ${entry.kind === "error" ? "sb-log-error" : ""}`} key={entry.key}>
-              {/* Not the animated spinner class — see `LogViewer`'s
-               *  identical note: a log line (even one still within
-               *  this strip's last-4 window) is a record of when a
-               *  step started, not a live "is it running right now"
-               *  indicator. */}
-              {entry.kind === "start" && <Loader2 size={11} strokeWidth={2.5} aria-hidden="true" />}
-              {entry.kind === "done" && <Check size={11} strokeWidth={2.5} className="sb-icon-done" aria-hidden="true" />}
-              {(entry.kind === "error" || entry.kind === "monitor-mismatch") && (
-                <AlertTriangle size={11} strokeWidth={2.5} aria-hidden="true" />
-              )}
-              {entry.kind === "monitor-restored" && <Check size={11} strokeWidth={2.5} className="sb-icon-done" aria-hidden="true" />}
-              {entry.kind === "paused" && <Pause size={11} strokeWidth={2.5} aria-hidden="true" />}
-              {entry.kind === "start" && t("statusbar.stepStarted", { id: entry.stepId })}
-              {entry.kind === "done" && t("statusbar.stepDone", { id: entry.stepId })}
-              {entry.kind === "error" && t("statusbar.stepFailed", { id: entry.stepId, message: entry.message })}
-              {entry.kind === "monitor-mismatch" && t("statusbar.monitorMismatchLog")}
-              {entry.kind === "monitor-restored" && t("statusbar.monitorRestoredLog")}
-              {entry.kind === "paused" && t("statusbar.pausedAtStep", { id: entry.stepId })}
-            </span>
-          ))
-        )}
-      </div>
 
       <div className="sb-right">
         {runState.status === "running" && monitorPaused && (
@@ -98,6 +111,7 @@ export function StatusBar({ runState, log, elapsedMs, zoomPercent, monitorPaused
           <>
             <AlertTriangle size={12} strokeWidth={2.5} aria-hidden="true" />
             <span>{t("statusbar.backendError", { message: runState.message })}</span>
+            <CopyButton text={runState.message} />
           </>
         )}
         {(runState.status === "running" || runState.status === "success") && (

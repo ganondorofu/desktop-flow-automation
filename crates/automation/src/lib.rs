@@ -544,12 +544,44 @@ fn app_path_from_env_override(id: &str) -> Option<String> {
     std::env::var(var).ok().filter(|p| std::path::Path::new(p).is_file())
 }
 
+/// Parses `RELAY_CUSTOM_BROWSERS` — `id:Display Name:C:\path\to.exe`
+/// entries separated by `;` — into `BrowserInfo`s for browsers this
+/// app has no built-in knowledge of at all (an unlisted Chromium
+/// fork, a portable build, one installed somewhere `find_installed_browsers`'s
+/// registry/hardcoded lookups don't check). Complements
+/// `RELAY_BROWSER_<ID>_PATH` (which only *redirects* one of the
+/// already-known ids above) by letting an entirely new id be
+/// registered — the only way to reach a browser this app's built-in
+/// candidate list doesn't name, short of a code change. Entries whose
+/// path doesn't exist, or that collide with a built-in id, are
+/// skipped rather than erroring — a stale/malformed entry in this env
+/// var shouldn't break browser detection for everything else.
+fn custom_browsers_from_env() -> Vec<BrowserInfo> {
+    let Ok(spec) = std::env::var("RELAY_CUSTOM_BROWSERS") else {
+        return Vec::new();
+    };
+    let known_ids: Vec<&str> = browser_candidates().into_iter().map(|(id, ..)| id).collect();
+    spec.split(';')
+        .filter(|entry| !entry.trim().is_empty())
+        .filter_map(|entry| {
+            let mut parts = entry.splitn(3, ':');
+            let id = parts.next()?.trim();
+            let name = parts.next()?.trim();
+            let path = parts.next()?.trim();
+            if id.is_empty() || name.is_empty() || path.is_empty() || known_ids.contains(&id) || !std::path::Path::new(path).is_file() {
+                return None;
+            }
+            Some(BrowserInfo { id: id.into(), name: name.into(), path: path.into() })
+        })
+        .collect()
+}
+
 /// Every Chromium-family browser actually found installed on this
-/// machine, in a stable preference order (Chrome, then Edge) — feeds
-/// the Inspector's browser picker for `LaunchBrowser`. For each
-/// candidate, tries (in order) an explicit env-var override, the
-/// registry's `App Paths` registration, then the hardcoded
-/// well-known install locations.
+/// machine, in a stable preference order (Chrome, then Edge, then any
+/// `RELAY_CUSTOM_BROWSERS` entries) — feeds the Inspector's browser
+/// picker for `LaunchBrowser`. For each built-in candidate, tries (in
+/// order) an explicit env-var override, the registry's `App Paths`
+/// registration, then the hardcoded well-known install locations.
 pub fn find_installed_browsers() -> Vec<BrowserInfo> {
     browser_candidates()
         .into_iter()
@@ -559,6 +591,7 @@ pub fn find_installed_browsers() -> Vec<BrowserInfo> {
                 .or_else(|| fallback_paths.into_iter().find(|p| std::path::Path::new(p).is_file()))?;
             Some(BrowserInfo { id: id.into(), name: name.into(), path })
         })
+        .chain(custom_browsers_from_env())
         .collect()
 }
 
@@ -677,14 +710,35 @@ fn open_tab_in(connection: &str, url: &str) -> Result<String, AutomationError> {
 /// browser-DOM automation primitive (driving page content needs a
 /// WebDriver/CDP integration, which this crate doesn't have).
 pub fn open_url(url: &str) -> Result<(), AutomationError> {
-    // The empty "" argument is `start`'s window-title placeholder —
-    // without it, a URL containing characters like `&` can be
-    // misparsed as the title instead of the target.
-    hidden_command("cmd")
-        .args(["/C", "start", "", url])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| AutomationError(format!("failed to open '{url}': {e}")))
+    // Deliberately not `cmd /C start ... url` — cmd.exe re-parses its
+    // own received command line and treats `&`, `|`, `^`, and friends
+    // as shell metacharacters *inside* a quoted argument, not just at
+    // the top level, so a flow-supplied URL containing one of those
+    // (an ordinary query string separator like `&`, or something a
+    // flow read from a file/webpage/HTTP response) could inject and
+    // run an entirely different command. `ShellExecuteW` with the
+    // `"open"` verb goes straight to the shell's URL/file handler —
+    // the same path double-clicking a link takes — without cmd.exe
+    // or any other command-line reinterpretation in between.
+    let url_wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+    let verb_wide: Vec<u16> = "open\0".encode_utf16().collect();
+    unsafe {
+        let result = ShellExecuteW(
+            None,
+            windows::core::PCWSTR::from_raw(verb_wide.as_ptr()),
+            windows::core::PCWSTR::from_raw(url_wide.as_ptr()),
+            windows::core::PCWSTR::null(),
+            windows::core::PCWSTR::null(),
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+        // See `relaunch_elevated`'s comment on this same check —
+        // ShellExecuteW packs a failure code (<= 32) into the
+        // HINSTANCE return slot instead of using an HRESULT.
+        if (result.0 as isize) <= 32 {
+            return Err(AutomationError(format!("failed to open '{url}'")));
+        }
+    }
+    Ok(())
 }
 
 /// Reads a file's entire contents as UTF-8 text into a variable — the

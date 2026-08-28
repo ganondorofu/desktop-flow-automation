@@ -11,7 +11,8 @@
     "build:native-host:debug": "node scripts/build-native-host.cjs",
     "build:native-host:release": "node scripts/build-native-host.cjs --release",
     "test:rust": "cargo test --workspace --lib",
-    "verify": "npm run build && npm run test:rust"
+    "test:frontend": "vitest run",
+    "verify": "npm run build && npm run test:frontend && npm run test:rust"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -29,10 +30,15 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "jsdom": "^30.0.1",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.11"
   }
 }

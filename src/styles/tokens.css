@@ -14,7 +14,10 @@
   --border-strong: #aeb5a8;
   --text: #191c18;
   --text-muted: #555d53;
-  --text-faint: #747d71;
+  /* >=4.5:1 against --surface/--surface-2 (WCAG AA for the small
+     11-13px labels/placeholders this is actually used at) — the
+     previous #747d71 measured ~4.0:1, below that threshold. */
+  --text-faint: #6b7264;
   --text-faintest: #949b91;
 
   --copper: #a85f2c;
@@ -63,7 +66,10 @@
     --border-strong: #44454b;
     --text: #f3f1ec;
     --text-muted: #d8d6d1;
-    --text-faint: #7a7b82;
+    /* >=4.5:1 against --bg/--surface — the previous #7a7b82 measured
+       ~3.8:1, below WCAG AA for the small labels/placeholders this
+       is used at. */
+    --text-faint: #8b8b94;
     --text-faintest: #5b5c63;
 
     --copper: #a85f2c;

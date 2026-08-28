@@ -24,8 +24,6 @@ import {
   describeNode,
   nodeIsIncomplete,
   duplicateFunctionDefIds,
-  findBranchOwner,
-  findContainer,
   findNode,
   NODE_KIND_OF,
   paletteLabel,
@@ -761,7 +759,12 @@ interface CanvasProps {
   onConnect: (sourceId: string, targetId: string) => void;
   onConnectBranchEntry: (ownerId: string, branchKey: BranchKey, targetId: string) => void;
   onDisconnect: (payload: DisconnectPayload) => void;
-  onSetBranchEntry: (ownerId: string, branchKey: BranchKey, entryId: string) => void;
+  /** The right-click "ここから開始する" command — a one-off run
+   *  starting at this exact step instead of the flow's own `entry`,
+   *  not a persistent change to the flow. Only offered while nothing's
+   *  currently running (see `isRunning` below). */
+  onRunFromHere: (stepId: string) => void;
+  isRunning: boolean;
   onToggleEnabled: (stepId: string) => void;
   onToggleBreakpoint: (stepId: string) => void;
   onZoomChange: (percent: number) => void;
@@ -791,7 +794,8 @@ export function Canvas({
   onConnect,
   onConnectBranchEntry,
   onDisconnect,
-  onSetBranchEntry,
+  onRunFromHere,
+  isRunning,
   onToggleEnabled,
   onToggleBreakpoint,
   onZoomChange,
@@ -954,20 +958,21 @@ export function Canvas({
     const items: MenuItem[] = [];
 
     if (!inSelection) {
-      const container = findContainer(flow, node.id);
-      // The top-level flow's entry is always its `start` node (see
-      // `ensureStartNode`) — "start from here" only applies to a
-      // nested branch (a loop/if/try_catch/function's own body),
-      // never to the top-level flow itself.
-      if (container && container !== flow && container.entry !== node.id) {
-        const owner = findBranchOwner(flow, node.id);
-        if (owner) {
-          items.push({
-            label: t("canvas.setBranchStart"),
-            onSelect: () => onSetBranchEntry(owner.ownerId, owner.branchKey, node.id),
-          });
-        }
-      }
+      // The old "ここから開始する"/`setBranchStart` (a structural,
+      // permanent rewire of which node a branch treats as its entry)
+      // was removed in favor of just this — a one-off run starting at
+      // this step, not a flow edit. It was confusing to have both: a
+      // near-identical label right next to a run command that people
+      // reasonably expected to just run the flow from here, doing
+      // something else entirely (visually reshuffling the branch's
+      // wiring instead). `connectBranchEntry`/`setBranchEntry` (the
+      // graph functions) still exist for the drag-a-wire-onto-a-branch-anchor
+      // gesture, which is a different, unambiguous interaction — only
+      // this redundant menu entry point is gone.
+      items.push({
+        label: t("canvas.runFromHere"),
+        onSelect: isRunning ? undefined : () => onRunFromHere(node.id),
+      });
       items.push({
         label: flowNode?.enabled === false ? t("canvas.enableStep") : t("canvas.disableStep"),
         onSelect: () => onToggleEnabled(node.id),

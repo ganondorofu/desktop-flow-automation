@@ -74,6 +74,7 @@
 mod identify;
 pub mod framing;
 pub mod native_host_registration;
+pub mod rendezvous;
 
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
@@ -87,13 +88,11 @@ use std::time::Duration;
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::{mpsc, oneshot};
 
-/// The well-known rendezvous point between this server and every
-/// `native-host` relay process — not a secret (the pipe name itself
-/// grants no access on its own), just an address. Actual access
-/// control is the pipe's default ACL (this user + admins only) and,
-/// one hop further out, Chrome only ever spawning a relay process at
-/// all for the allow-listed extension id.
-pub const PIPE_NAME: &str = r"\\.\pipe\relay-bridge";
+/// The auth token every `native-host` connection must present (as
+/// its first frame) before this server treats it as trusted — see
+/// `rendezvous`'s doc comment. Set once, by `start_server`, before
+/// any connection can arrive.
+static EXPECTED_TOKEN: OnceCell<[u8; 32]> = OnceCell::new();
 
 static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
@@ -172,30 +171,52 @@ fn bridge() -> &'static Bridge {
     BRIDGE.get_or_init(Bridge::new)
 }
 
-/// Starts the named-pipe server at [`PIPE_NAME`] — safe to call more
-/// than once (e.g. defensively on every app launch); later calls are
-/// no-ops as long as the first pipe instance was created. Every
-/// connection is a `native-host` relay process Chrome itself spawned
-/// (see this module's doc comment) — never a page or process dialing
-/// straight in over the network, since there's no network listener
-/// here at all.
+/// Starts the named-pipe server — safe to call more than once (e.g.
+/// defensively on every app launch); later calls are no-ops as long
+/// as the first pipe instance was created. Every connection is a
+/// `native-host` relay process Chrome itself spawned (see this
+/// module's doc comment) — never a page or process dialing straight
+/// in over the network, since there's no network listener here at
+/// all.
+///
+/// Generates a fresh [`rendezvous`] (random pipe name + auth token)
+/// on every call rather than using a fixed, compiled-in name — see
+/// `rendezvous`'s doc comment for why a fixed name isn't safe once
+/// `.first_pipe_instance(true)` turned out to be unusable (below).
+/// The rendezvous info is only published to disk (where
+/// `crates/native-host` reads it) *after* this server confirms it's
+/// actually listening, closing the pre-creation race down to nothing.
 pub fn start_server() {
-    start_server_at(PIPE_NAME.to_string());
+    let rendezvous = rendezvous::generate();
+    if EXPECTED_TOKEN.set(rendezvous.token).is_err() {
+        // Already started once this process; nothing to do.
+        return;
+    }
+    let (ready_tx, ready_rx) = oneshot::channel();
+    start_server_at(rendezvous.pipe_name.clone(), Some(ready_tx));
+    let ready = RUNTIME.block_on(async { tokio::time::timeout(Duration::from_secs(5), ready_rx).await });
+    if !matches!(ready, Ok(Ok(()))) {
+        eprintln!("browser-bridge: pipe server did not confirm startup in time; not publishing rendezvous info");
+        return;
+    }
+    if let Err(e) = rendezvous::publish(&rendezvous) {
+        eprintln!("browser-bridge: failed to publish pipe rendezvous info: {e}");
+    }
 }
 
 /// The actual implementation, parameterized over the pipe name so
-/// tests can run against a private, uniquely-named pipe instead of
-/// [`PIPE_NAME`] — the real one is a magnet for *actual* browser
-/// connections on a dev machine where Chrome/Comet are sitting there
-/// auto-reconnecting every couple of seconds, which would otherwise
-/// leak real connections into whatever process happens to be
-/// listening on it, tests included.
-fn start_server_at(pipe_name: String) {
+/// tests can run against a private, uniquely-named pipe instead of a
+/// real [`rendezvous`]-generated one — a fixed test name would
+/// otherwise be a magnet for *actual* browser connections on a dev
+/// machine where Chrome/Comet are sitting there auto-reconnecting
+/// every couple of seconds. `ready`, if given, fires once the first
+/// pipe instance is confirmed created — see `start_server`.
+fn start_server_at(pipe_name: String, ready: Option<oneshot::Sender<()>>) {
     bridge();
     RUNTIME.spawn(async move {
         // Deliberately NOT using `.first_pipe_instance(true)` here,
         // despite it being the textbook defense against a malicious
-        // process pre-creating `PIPE_NAME` before Relay starts and
+        // process pre-creating this pipe name before Relay starts and
         // sitting there intercepting connections meant for the real
         // server: tried it, and on real hardware it made
         // `ServerOptions::create` fail with `ERROR_ACCESS_DENIED`
@@ -211,15 +232,10 @@ fn start_server_at(pipe_name: String) {
         // here) — but the practical effect was Relay's bridge server
         // never starting *at all*, on every launch, on two separate
         // machines, which is a strictly worse outcome than the
-        // pre-creation attack this flag defends against. The
-        // pre-creation scenario is still meaningfully mitigated by
-        // `identify::is_registered_native_host` below, which verifies
-        // every connecting client is actually `relay-native-host.exe`
-        // regardless of which process created the pipe first — a
-        // rogue pre-created pipe just never receives the real
-        // extension's connection in the first place, since Chrome
-        // only ever spawns the real native host, which only ever
-        // dials the real `PIPE_NAME`.
+        // pre-creation attack this flag defends against. That attack
+        // is instead defended against by generating a fresh,
+        // unpredictable pipe name and token every launch (see
+        // `rendezvous`) rather than relying on this flag at all.
         let mut server = match ServerOptions::new().create(&pipe_name) {
             Ok(s) => s,
             Err(e) => {
@@ -227,6 +243,9 @@ fn start_server_at(pipe_name: String) {
                 return;
             }
         };
+        if let Some(ready) = ready {
+            let _ = ready.send(());
+        }
         loop {
             if let Err(e) = server.connect().await {
                 eprintln!("browser-bridge: pipe connect failed: {e}");
@@ -353,25 +372,54 @@ async fn handle_connection(pipe: NamedPipeServer) {
         return;
     }
     let browser_id = identify::browser_id_for_pipe_client(pipe.as_raw_handle());
-    eprintln!("browser-bridge: accepted a native-host connection, identified browser = {browser_id:?}");
     let (mut read_half, mut write_half) = tokio::io::split(pipe);
+
+    // The auth handshake — see `rendezvous`'s doc comment. Every real
+    // `native-host` sends the token it read from the rendezvous file
+    // as its very first frame, before any real traffic; anything else
+    // (wrong token, no token within the timeout, connection closed
+    // early) means this connection isn't a `native-host` that learned
+    // the pipe name legitimately, even if it somehow passed the
+    // process-identity check above (e.g. a second instance of the
+    // real exe pointed at this pipe name by something other than the
+    // real rendezvous flow). Skipped under `#[cfg(test)]` for the same
+    // reason as the identity check above: `EXPECTED_TOKEN` is never
+    // set in the round-trip test, which exercises routing, not this
+    // access-control layer.
+    #[cfg(not(test))]
+    {
+        let handshake = tokio::time::timeout(Duration::from_secs(5), framing::read_frame(&mut read_half)).await;
+        let presented = match handshake {
+            Ok(Ok(Some(bytes))) => bytes,
+            _ => {
+                eprintln!("browser-bridge: rejected a pipe connection — no valid auth handshake within 5s");
+                return;
+            }
+        };
+        let expected = EXPECTED_TOKEN.get();
+        if expected.is_none_or(|t| presented.as_slice() != t.as_slice()) {
+            eprintln!("browser-bridge: rejected a pipe connection — auth token did not match");
+            return;
+        }
+    }
+    eprintln!("browser-bridge: accepted a native-host connection, identified browser = {browser_id:?}");
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
     let b = bridge();
-    // Only take the waiting slot if this connection is either
-    // confirmed to be the expected browser, or identification simply
-    // couldn't determine which browser it is (best-effort — see
-    // `identify`'s doc comments on why that can legitimately happen).
-    // A connection positively identified as some *other* browser is
-    // never allowed to claim it, even if nobody else has connected
-    // yet — it falls through to the auto-id path below instead, and
-    // `spawn_instance` keeps waiting for the real one until its
-    // timeout.
+    // Only take the waiting slot if this connection is *positively*
+    // identified as the expected browser — a connection whose browser
+    // couldn't be determined at all (`None`) no longer gets the
+    // benefit of the doubt here, even though every connection
+    // reaching this point has already passed `is_registered_native_host`
+    // (so it's confirmed to be the real native-host exe): an
+    // unidentified ancestor chain is still a real signal something
+    // about this spawn is unexpected, and `spawn_instance` failing
+    // with a clear timeout is a better outcome than silently routing
+    // a `LaunchBrowser` step's commands into a connection nobody could
+    // verify belongs to the browser that was actually asked for.
     let claimed = {
         let mut awaiting = b.awaiting_connect.lock().unwrap();
-        let claims_awaited = awaiting
-            .as_ref()
-            .is_some_and(|(_, expected, _)| browser_id.as_deref().is_none_or(|actual| actual == expected));
+        let claims_awaited = awaiting.as_ref().is_some_and(|(_, expected, _)| browser_id.as_deref() == Some(expected.as_str()));
         if let Some((waiting_id, expected, _)) = awaiting.as_ref() {
             if !claims_awaited {
                 eprintln!(
@@ -552,14 +600,15 @@ mod tests {
     fn send_command_round_trips_and_addresses_instances_independently() {
         use tokio::net::windows::named_pipe::ClientOptions;
 
-        // A private, uniquely-named pipe rather than `PIPE_NAME` — on
-        // a dev machine with the real extension installed, Chrome/
-        // Comet auto-reconnect every couple of seconds and would
-        // otherwise dial straight into this test's own server the
-        // moment it starts listening on the real name, polluting the
-        // connection count this test asserts on.
+        // A private, uniquely-named pipe rather than a real
+        // `rendezvous`-generated one — on a dev machine with the real
+        // extension installed, Chrome/Comet auto-reconnect every
+        // couple of seconds and would otherwise dial straight into
+        // this test's own server the moment it starts listening on
+        // the real name, polluting the connection count this test
+        // asserts on.
         let pipe_name = format!(r"\\.\pipe\relay-bridge-test-{}", std::process::id());
-        start_server_at(pipe_name.clone());
+        start_server_at(pipe_name.clone(), None);
         // Give the listener a moment to create the first pipe instance.
         std::thread::sleep(Duration::from_millis(200));
 

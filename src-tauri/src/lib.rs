@@ -450,18 +450,39 @@ pub fn run() {
             // where `npm run tauri build`'s `beforeBuildCommand` puts
             // both binaries in the same `target/release/` directory
             // but nothing bundles a resource dir at all.
-            let native_host_exe = app
+            // Both candidates are checked with `.is_file()` before
+            // being accepted — registering a manifest that points at
+            // an exe which doesn't actually exist yet (e.g.
+            // `target/debug/relay.exe` launched directly, skipping
+            // `npm run tauri dev`'s `beforeDevCommand` that builds
+            // `relay-native-host.exe` first) doesn't fail loudly: the
+            // registry write itself succeeds, Chrome just silently
+            // can't spawn the host later when the extension connects,
+            // and *nothing* ever reaches this app's own logging (the
+            // failure happens entirely on Chrome's side, before any
+            // pipe connection is even attempted) — the exact "browser
+            // window opened but the extension never connected" dead
+            // end this comment is here to prevent.
+            let resource_native_host_exe = app
                 .path()
                 .resolve("relay-native-host.exe", tauri::path::BaseDirectory::Resource)
                 .ok()
-                .filter(|p| p.is_file())
-                .or_else(|| std::env::current_exe().ok()?.parent().map(|d| d.join("relay-native-host.exe")));
-            if let Some(native_host_exe) = native_host_exe {
-                if let Err(e) = browser_bridge::native_host_registration::register(&native_host_exe) {
-                    eprintln!("failed to register the browser native-messaging host: {e}");
+                .filter(|p| p.is_file());
+            let exe_relative_native_host_exe = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join("relay-native-host.exe")))
+                .filter(|p| p.is_file());
+            match resource_native_host_exe.or(exe_relative_native_host_exe) {
+                Some(native_host_exe) => {
+                    if let Err(e) = browser_bridge::native_host_registration::register(&native_host_exe) {
+                        eprintln!("failed to register the browser native-messaging host: {e}");
+                    }
                 }
-            } else {
-                eprintln!("failed to register the browser native-messaging host: couldn't locate relay-native-host.exe");
+                None => {
+                    eprintln!(
+                        "failed to register the browser native-messaging host: relay-native-host.exe wasn't found next to this exe or in the bundled resources — browser automation won't work until it's built (`npm run build:native-host:debug` for a debug run, or launch via `npm run tauri dev`/`npm run tauri build` instead of running this exe directly, since those build it automatically first)"
+                    );
+                }
             }
             Ok(())
         })

@@ -169,6 +169,25 @@ mod imp {
         }
         process_exe_stem(client_pid).as_deref() == Some("relay-native-host")
     }
+
+    /// Diagnostic-only: describes whatever `is_registered_native_host`
+    /// actually saw for `pipe_handle`'s client — the pid and, if it
+    /// could be queried, its exe stem — so a rejection can be logged
+    /// with the real reason instead of just "rejected", making a
+    /// false-positive rejection (a legitimate `relay-native-host.exe`
+    /// getting turned away for some unexpected reason) diagnosable
+    /// from the log alone.
+    pub fn describe_pipe_client(pipe_handle: RawHandle) -> String {
+        let mut client_pid: u32 = 0;
+        let ok = unsafe { GetNamedPipeClientProcessId(HANDLE(pipe_handle), &mut client_pid) };
+        if ok.is_err() {
+            return "GetNamedPipeClientProcessId failed".to_string();
+        }
+        match process_exe_stem(client_pid) {
+            Some(stem) => format!("pid {client_pid}, exe stem {stem:?}"),
+            None => format!("pid {client_pid}, exe stem could not be queried (process exited, or OpenProcess/QueryFullProcessImageNameW failed)"),
+        }
+    }
 }
 
 #[cfg(not(windows))]
@@ -184,6 +203,10 @@ mod imp {
     pub fn is_registered_native_host(_pipe_handle: usize) -> bool {
         true
     }
+
+    pub fn describe_pipe_client(_pipe_handle: usize) -> String {
+        "not available on this platform".to_string()
+    }
 }
 
-pub use imp::{browser_id_for_pipe_client, is_registered_native_host};
+pub use imp::{browser_id_for_pipe_client, describe_pipe_client, is_registered_native_host};

@@ -25,6 +25,22 @@ pub const EXTENSION_ID: &str = "ahneaplcpkohdalpgiiigmejakbbibfj";
 
 const HOST_NAME: &str = "dev.relay.app.bridge";
 
+/// Strips a Windows "verbatim"/extended-length path prefix
+/// (`\\?\C:\...`) if present. `std::env::current_exe()` can return a
+/// path in this form (observed in practice: a debug build launched
+/// via `target\debug\relay.exe` directly), and while `\\?\` paths
+/// work fine for this app's own file I/O, Chrome apparently doesn't
+/// handle one in a native-messaging host manifest's `"path"` field —
+/// it fails to launch the host with no error surfaced anywhere on
+/// this app's side (Chrome owns that spawn, and the native host
+/// itself never gets far enough to log anything), which looks
+/// identical to "the extension never connected" from every other
+/// possible cause. A bare drive-letter path works in every case this
+/// path can realistically take, so stripping the prefix is safe.
+fn strip_verbatim_prefix(path: &str) -> String {
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
+}
+
 fn manifest_path() -> std::io::Result<std::path::PathBuf> {
     let base = std::env::var_os("LOCALAPPDATA")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "%LOCALAPPDATA% is not set"))?;
@@ -43,7 +59,7 @@ pub fn register(native_host_exe: &std::path::Path) -> std::io::Result<()> {
     let manifest = serde_json::json!({
         "name": HOST_NAME,
         "description": "Relay Bridge native messaging host",
-        "path": native_host_exe.to_string_lossy(),
+        "path": strip_verbatim_prefix(&native_host_exe.to_string_lossy()),
         "type": "stdio",
         "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")],
     });

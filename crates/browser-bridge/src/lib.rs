@@ -193,18 +193,34 @@ pub fn start_server() {
 fn start_server_at(pipe_name: String) {
     bridge();
     RUNTIME.spawn(async move {
-        // `first_pipe_instance(true)` on the very first instance only
-        // — refuses to create the pipe at all if some *other* process
-        // already owns this name, instead of quietly coexisting with
-        // it. Without this, a malicious process could pre-create
-        // `PIPE_NAME` before Relay itself starts and sit there
-        // intercepting the connections a `native-host` relay was
-        // actually meant to reach. Safe to require here (and not on
-        // the later per-connection instances below, which are
-        // additional instances of a pipe *this* process already
-        // owns) now that tests run against their own uniquely-named
-        // pipe instead of racing this same call for real.
-        let mut server = match ServerOptions::new().first_pipe_instance(true).create(&pipe_name) {
+        // Deliberately NOT using `.first_pipe_instance(true)` here,
+        // despite it being the textbook defense against a malicious
+        // process pre-creating `PIPE_NAME` before Relay starts and
+        // sitting there intercepting connections meant for the real
+        // server: tried it, and on real hardware it made
+        // `ServerOptions::create` fail with `ERROR_ACCESS_DENIED`
+        // *even on a completely clean pipe name nothing else had ever
+        // touched* — confirmed by a direct A/B rebuild (same exe,
+        // flag on vs. off) and by successfully creating a pipe of the
+        // exact same name from a separate, unrelated process (a
+        // `System.IO.Pipes.NamedPipeServerStream` from PowerShell)
+        // while Relay's own attempt with the flag set was still
+        // failing. Root cause not fully pinned down (a
+        // tokio/windows-rs interaction, or a security-descriptor
+        // detail `first_pipe_instance` needs that isn't being met
+        // here) — but the practical effect was Relay's bridge server
+        // never starting *at all*, on every launch, on two separate
+        // machines, which is a strictly worse outcome than the
+        // pre-creation attack this flag defends against. The
+        // pre-creation scenario is still meaningfully mitigated by
+        // `identify::is_registered_native_host` below, which verifies
+        // every connecting client is actually `relay-native-host.exe`
+        // regardless of which process created the pipe first — a
+        // rogue pre-created pipe just never receives the real
+        // extension's connection in the first place, since Chrome
+        // only ever spawns the real native host, which only ever
+        // dials the real `PIPE_NAME`.
+        let mut server = match ServerOptions::new().create(&pipe_name) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("browser-bridge: failed to create named pipe {pipe_name}: {e}");
@@ -330,10 +346,14 @@ async fn handle_connection(pipe: NamedPipeServer) {
     // access-control check.
     #[cfg(not(test))]
     if !identify::is_registered_native_host(pipe.as_raw_handle()) {
-        eprintln!("browser-bridge: rejected a pipe connection from a process that isn't relay-native-host.exe");
+        eprintln!(
+            "browser-bridge: rejected a pipe connection — expected relay-native-host.exe, saw {}",
+            identify::describe_pipe_client(pipe.as_raw_handle())
+        );
         return;
     }
     let browser_id = identify::browser_id_for_pipe_client(pipe.as_raw_handle());
+    eprintln!("browser-bridge: accepted a native-host connection, identified browser = {browser_id:?}");
     let (mut read_half, mut write_half) = tokio::io::split(pipe);
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
@@ -352,6 +372,13 @@ async fn handle_connection(pipe: NamedPipeServer) {
         let claims_awaited = awaiting
             .as_ref()
             .is_some_and(|(_, expected, _)| browser_id.as_deref().is_none_or(|actual| actual == expected));
+        if let Some((waiting_id, expected, _)) = awaiting.as_ref() {
+            if !claims_awaited {
+                eprintln!(
+                    "browser-bridge: a connection arrived while spawn_instance was waiting for instance {waiting_id:?} (expected browser {expected:?}), but this connection identified as {browser_id:?} — not claiming the slot"
+                );
+            }
+        }
         if claims_awaited { awaiting.take() } else { None }
     };
     let id = if let Some((id, _, notify)) = claimed {

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Relay Bridge",
+  "version": "0.1.0",
+  "description": "Connects the Relay desktop automation app to this browser so flows can navigate, click, read, and fill web pages in a tab you already have open.",
+  "permissions": ["scripting", "tabs", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

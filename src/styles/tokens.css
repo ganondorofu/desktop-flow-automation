@@ -1,0 +1,81 @@
+@import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --bg: #e7e9e3;
+  --surface: #f5f6f1;
+  --surface-2: #edeee7;
+  --surface-3: #e0e2d9;
+  --border: #c7cbbe;
+  --border-strong: #aeb3a3;
+  --text: #1b1d18;
+  --text-muted: #61665a;
+  --text-faint: #8b9081;
+
+  --copper: #a85f2c;
+  --copper-strong: #8f4e22;
+  --copper-soft: #d89a66;
+  --copper-wash: #ebd9c4;
+
+  --teal: #3b726c;
+  --teal-wash: #d9e5e1;
+
+  --success: #3f7a4c;
+  --success-wash: #dceadf;
+  --warning: #b5811f;
+  --warning-wash: #f1e2c2;
+  --danger: #a8432e;
+  --danger-wash: #f1d9d1;
+
+  --canvas-dot: #c4c8b9;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1d20;
+    --surface: #212226;
+    --surface-2: #26272b;
+    --surface-3: #2c2d31;
+    --border: #34353a;
+    --border-strong: #44454b;
+    --text: #f3f1ec;
+    --text-muted: #d8d6d1;
+    --text-faint: #7a7b82;
+    --text-faintest: #5b5c63;
+
+    --copper: #a85f2c;
+    --copper-strong: #c2793f;
+    --copper-soft: #d89a5e;
+    --copper-wash: #3a2c1f;
+    --copper-tint: rgba(168, 95, 44, 0.14);
+
+    --teal: #3b726c;
+    --teal-strong: #6fada5;
+    --teal-spin: #4f8f88;
+    --teal-wash: #1e3230;
+    --teal-tint: rgba(59, 114, 108, 0.18);
+
+    --danger: #e17b65;
+    --danger-wash: #3b231e;
+
+    --canvas-dot: #2c2d31;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}

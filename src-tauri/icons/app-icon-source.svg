@@ -1,0 +1,23 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#26282d"/>
+      <stop offset="1" stop-color="#1a1b1e"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Relay path: three wired nodes, the way a flow chains through the canvas -->
+  <path d="M 260 300 C 380 300, 420 512, 512 512 C 604 512, 644 724, 764 724"
+        fill="none" stroke="#54595f" stroke-width="34" stroke-linecap="round"/>
+
+  <circle cx="260" cy="300" r="86" fill="#3a3d43" stroke="#6b7078" stroke-width="14"/>
+  <circle cx="764" cy="724" r="86" fill="#3a3d43" stroke="#6b7078" stroke-width="14"/>
+
+  <circle cx="512" cy="512" r="128" fill="#a85f2c"/>
+  <circle cx="512" cy="512" r="128" fill="none" stroke="#c2793f" stroke-width="10"/>
+
+  <!-- Play/relay-forward mark inside the center node -->
+  <path d="M 470 452 L 470 572 L 572 512 Z" fill="#f5f6f1"/>
+</svg>

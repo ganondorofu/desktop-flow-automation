@@ -1,0 +1,748 @@
+<title>Relay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --bg: #E7E9E3;
+    --surface: #F5F6F1;
+    --surface-2: #EDEEE7;
+    --surface-3: #E0E2D9;
+    --border: #C7CBBE;
+    --border-strong: #AEB3A3;
+    --text: #1B1D18;
+    --text-muted: #61665A;
+    --text-faint: #8B9081;
+
+    --copper: #A85F2C;
+    --copper-strong: #8F4E22;
+    --copper-soft: #D89A66;
+    --copper-wash: #EBD9C4;
+
+    --teal: #3B726C;
+    --teal-wash: #D9E5E1;
+
+    --success: #3F7A4C;
+    --success-wash: #DCEADF;
+    --warning: #B5811F;
+    --warning-wash: #F1E2C2;
+    --danger: #A8432E;
+    --danger-wash: #F1D9D1;
+
+    --canvas-dot: #C4C8B9;
+    --shadow: 0 1px 2px rgba(20, 22, 15, 0.06), 0 6px 16px rgba(20, 22, 15, 0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171A;
+      --surface: #1B1F22;
+      --surface-2: #21262A;
+      --surface-3: #282E32;
+      --border: #343B40;
+      --border-strong: #454D53;
+      --text: #E9EBE5;
+      --text-muted: #9AA19B;
+      --text-faint: #6D746D;
+
+      --copper: #D3894E;
+      --copper-strong: #E4A26C;
+      --copper-soft: #A96A3A;
+      --copper-wash: #3A2C1F;
+
+      --teal: #6FB4AC;
+      --teal-wash: #1E3230;
+
+      --success: #6FBB7E;
+      --success-wash: #1F3324;
+      --warning: #E0AC50;
+      --warning-wash: #3A2E17;
+      --danger: #E17B65;
+      --danger-wash: #3B231E;
+
+      --canvas-dot: #2B3136;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #14171A;
+    --surface: #1B1F22;
+    --surface-2: #21262A;
+    --surface-3: #282E32;
+    --border: #343B40;
+    --border-strong: #454D53;
+    --text: #E9EBE5;
+    --text-muted: #9AA19B;
+    --text-faint: #6D746D;
+
+    --copper: #D3894E;
+    --copper-strong: #E4A26C;
+    --copper-soft: #A96A3A;
+    --copper-wash: #3A2C1F;
+
+    --teal: #6FB4AC;
+    --teal-wash: #1E3230;
+
+    --success: #6FBB7E;
+    --success-wash: #1F3324;
+    --warning: #E0AC50;
+    --warning-wash: #3A2E17;
+    --danger: #E17B65;
+    --danger-wash: #3B231E;
+
+    --canvas-dot: #2B3136;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .app {
+    display: grid;
+    grid-template-columns: 236px 1fr 296px;
+    grid-template-rows: 50px 1fr 28px;
+    grid-template-areas:
+      "toolbar toolbar toolbar"
+      "palette canvas inspector"
+      "status status status";
+    height: 100vh;
+    min-height: 560px;
+  }
+
+  /* ---------- Toolbar ---------- */
+  .toolbar {
+    grid-area: toolbar;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 0 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .wordmark {
+    font-family: "Big Shoulders Display", "Arial Narrow", sans-serif;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+  }
+  .wordmark .dot { color: var(--copper); font-size: 22px; line-height: 1; }
+
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font-size: 12.5px;
+    padding-left: 18px;
+    border-left: 1px solid var(--border);
+  }
+  .breadcrumb b { color: var(--text); font-weight: 500; }
+  .breadcrumb .sep { color: var(--text-faint); }
+
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 auto;
+  }
+  .tbtn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .tbtn:hover { background: var(--surface-3); }
+  .tbtn:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+  .tbtn.primary {
+    background: var(--copper);
+    border-color: var(--copper-strong);
+    color: #FFFBF6;
+  }
+  .tbtn.primary:hover { background: var(--copper-strong); }
+  .tbtn .glyph { font-size: 10px; }
+
+  .modeswitch {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .modeswitch button {
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border: none;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .modeswitch button.active { background: var(--teal); color: #F3FAF8; }
+  .modeswitch button:not(.active):hover { background: var(--surface-3); color: var(--text); }
+  .modeswitch button:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .icon-btn {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+  .icon-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+
+  /* ---------- Palette ---------- */
+  .palette {
+    grid-area: palette;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .palette-search {
+    margin: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 9px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--text-faint);
+    font-size: 12.5px;
+  }
+  .palette-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 2px 10px 14px;
+  }
+  .pal-group { margin-top: 14px; }
+  .pal-group:first-child { margin-top: 0; }
+  .pal-heading {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    padding: 0 4px 6px;
+  }
+  .pal-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 6px;
+    border-radius: 4px;
+    cursor: grab;
+    color: var(--text);
+  }
+  .pal-item:hover { background: var(--surface-2); }
+  .swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .sw-trigger { background: var(--teal); }
+  .sw-input { background: var(--copper); }
+  .sw-vision { background: #7A6FB0; }
+  .sw-control { background: var(--text-faint); }
+  .pal-item span { font-size: 12.5px; }
+
+  /* ---------- Canvas ---------- */
+  .canvas-wrap {
+    grid-area: canvas;
+    position: relative;
+    overflow: auto;
+    background:
+      radial-gradient(circle, var(--canvas-dot) 1px, transparent 1.2px);
+    background-size: 22px 22px;
+    background-color: var(--bg);
+  }
+  .canvas-inner {
+    position: relative;
+    width: 1300px;
+    height: 560px;
+  }
+
+  .wire { fill: none; stroke: var(--border-strong); stroke-width: 1.6; }
+  .wire-yes { stroke: var(--copper-soft); }
+  .wire-no { stroke: var(--text-faint); stroke-dasharray: 3 4; }
+  .wire-live {
+    stroke: var(--copper);
+    stroke-width: 2;
+    stroke-dasharray: 6 5;
+    animation: flow 1.1s linear infinite;
+  }
+  @keyframes flow { to { stroke-dashoffset: -22; } }
+  @media (prefers-reduced-motion: reduce) {
+    .wire-live { animation: none; }
+  }
+  .wire-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    fill: var(--text-faint);
+    letter-spacing: 0.04em;
+  }
+
+  .node {
+    position: absolute;
+    width: var(--w);
+    height: 64px;
+    left: var(--x);
+    top: var(--y);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent, var(--border-strong));
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 8px 12px 9px 13px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+  }
+  .node.selected {
+    border-color: var(--copper);
+    border-left-color: var(--copper);
+    box-shadow: 0 0 0 1px var(--copper), var(--shadow);
+  }
+  .node.muted { opacity: 0.55; }
+  .node-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .node-idx {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+  .node-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .node-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: "IBM Plex Mono", monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .status-chip {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 3px;
+    flex: none;
+  }
+  .chip-done { background: var(--success-wash); color: var(--success); }
+  .chip-running { background: var(--warning-wash); color: var(--warning); }
+  .chip-idle { background: var(--surface-3); color: var(--text-faint); }
+
+  .pin {
+    position: absolute;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--copper-soft);
+    border: 1px solid var(--copper);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .pin.left { left: -4px; }
+  .pin.right { right: -4px; }
+
+  /* ---------- Inspector ---------- */
+  .inspector {
+    grid-area: inspector;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 14px 16px 20px;
+  }
+  .insp-eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin: 0 0 4px;
+  }
+  .insp-title {
+    font-size: 15.5px;
+    font-weight: 600;
+    margin: 0 0 16px;
+  }
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .thumb-row { display: flex; align-items: center; gap: 10px; }
+  .thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background:
+      linear-gradient(135deg, var(--copper-wash) 25%, transparent 25%) 0 0/10px 10px,
+      linear-gradient(135deg, transparent 75%, var(--copper-wash) 75%) 0 0/10px 10px,
+      var(--surface-3);
+    flex: none;
+  }
+  .thumb-meta { font-size: 12px; }
+  .thumb-meta .fname { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; }
+  .link-btn {
+    background: none; border: none; padding: 0; margin-top: 2px;
+    color: var(--teal); font: inherit; font-size: 11px; cursor: pointer;
+  }
+  .link-btn:hover { text-decoration: underline; }
+
+  .segmented {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .segmented button {
+    flex: 1;
+    font: inherit;
+    font-size: 11px;
+    padding: 7px 4px;
+    border: none;
+    border-right: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .segmented button:last-child { border-right: none; }
+  .segmented button.active { background: var(--teal-wash); color: var(--teal); font-weight: 600; }
+  .segmented button:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+
+  .slider-row { display: flex; align-items: center; gap: 10px; }
+  input[type="range"] {
+    flex: 1;
+    accent-color: var(--copper);
+  }
+  .slider-val {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    width: 34px;
+    text-align: right;
+  }
+
+  .coord-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+  .coord-box {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    padding: 5px 6px;
+    text-align: center;
+  }
+  .coord-box .k { font-size: 9px; color: var(--text-faint); }
+  .coord-box .v { font-family: "IBM Plex Mono", monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  .num-input {
+    width: 100%;
+    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-family: "IBM Plex Mono", monospace;
+    padding: 0 9px;
+  }
+  .num-input:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+
+  .result-box {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--success-wash);
+    padding: 10px 12px;
+  }
+  .result-box .rtitle {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--success);
+    margin-bottom: 4px;
+  }
+  .result-box .rmeta {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .conf-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-3);
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .conf-bar i { display: block; height: 100%; width: 94%; background: var(--success); }
+
+  /* ---------- Status bar ---------- */
+  .statusbar {
+    grid-area: status;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 14px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .statusbar .log { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .statusbar .log b { color: var(--text); font-weight: 500; }
+  .run-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--warning);
+    font-weight: 500;
+  }
+  .run-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--warning);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .run-dot { animation: none; } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+</style>
+
+<div class="app">
+  <div class="toolbar">
+    <div class="wordmark">RELAY<span class="dot">.</span></div>
+    <div class="breadcrumb"><b>Invoice Export</b><span class="sep">/</span>main.flow</div>
+    <div class="transport">
+      <button class="tbtn primary"><span class="glyph">▶</span>Run</button>
+      <button class="tbtn"><span class="glyph">⏵</span>Step</button>
+      <button class="tbtn"><span class="glyph">■</span>Stop</button>
+    </div>
+    <div class="modeswitch" role="group" aria-label="Editor mode">
+      <button class="active">Flow</button>
+      <button>Code</button>
+    </div>
+    <div class="toolbar-right">
+      <button class="icon-btn" title="Save" aria-label="Save">💾</button>
+      <button class="icon-btn" title="History" aria-label="History">↺</button>
+      <button class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+    </div>
+  </div>
+
+  <div class="palette">
+    <div class="palette-search">🔍 Search actions</div>
+    <div class="palette-scroll">
+      <div class="pal-group">
+        <div class="pal-heading">Triggers</div>
+        <div class="pal-item"><span class="swatch sw-trigger"></span><span>Start</span></div>
+        <div class="pal-item"><span class="swatch sw-trigger"></span><span>Hotkey</span></div>
+        <div class="pal-item"><span class="swatch sw-trigger"></span><span>Schedule</span></div>
+      </div>
+      <div class="pal-group">
+        <div class="pal-heading">Vision</div>
+        <div class="pal-item"><span class="swatch sw-vision"></span><span>Find Image (AI)</span></div>
+        <div class="pal-item"><span class="swatch sw-vision"></span><span>Find Text (OCR)</span></div>
+        <div class="pal-item"><span class="swatch sw-vision"></span><span>Wait for Image</span></div>
+      </div>
+      <div class="pal-group">
+        <div class="pal-heading">Input</div>
+        <div class="pal-item"><span class="swatch sw-input"></span><span>Click</span></div>
+        <div class="pal-item"><span class="swatch sw-input"></span><span>Type Text</span></div>
+        <div class="pal-item"><span class="swatch sw-input"></span><span>Key Press</span></div>
+        <div class="pal-item"><span class="swatch sw-input"></span><span>Wait for Window</span></div>
+      </div>
+      <div class="pal-group">
+        <div class="pal-heading">Control</div>
+        <div class="pal-item"><span class="swatch sw-control"></span><span>If / Else</span></div>
+        <div class="pal-item"><span class="swatch sw-control"></span><span>Loop</span></div>
+        <div class="pal-item"><span class="swatch sw-control"></span><span>Wait</span></div>
+        <div class="pal-item"><span class="swatch sw-control"></span><span>Stop</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-wrap">
+    <div class="canvas-inner">
+      <svg width="1300" height="560" style="position:absolute; top:0; left:0;">
+        <path class="wire" d="M190,332 H240" />
+        <path class="wire" d="M410,332 H460" />
+        <path class="wire wire-live" d="M660,332 H720" />
+        <path class="wire wire-yes" d="M890,332 V212 H950" />
+        <text class="wire-label" x="898" y="290">YES · 0.85</text>
+        <path class="wire wire-no" d="M890,332 V452 H950" />
+        <text class="wire-label" x="898" y="410">NO</text>
+        <path class="wire" d="M1100,212 H1150" />
+        <path class="wire wire-no" d="M1025,452 V500 H100 V364" />
+        <text class="wire-label" x="420" y="514">RETRY LOOP</text>
+      </svg>
+
+      <div class="node" style="--x:40px; --y:300px; --w:150px; --accent:var(--teal);">
+        <div class="node-top"><span class="node-idx">01</span><span class="status-chip chip-done">Done</span></div>
+        <div class="node-title">Start</div>
+        <div class="node-sub">manual run</div>
+        <span class="pin right"></span>
+      </div>
+
+      <div class="node" style="--x:240px; --y:300px; --w:170px; --accent:var(--copper);">
+        <div class="node-top"><span class="node-idx">02</span><span class="status-chip chip-done">Done</span></div>
+        <div class="node-title">Wait for Window</div>
+        <div class="node-sub">"Invoices — Notepad"</div>
+        <span class="pin left"></span><span class="pin right"></span>
+      </div>
+
+      <div class="node selected" style="--x:460px; --y:300px; --w:200px; --accent:#7A6FB0;">
+        <div class="node-top"><span class="node-idx">03</span><span class="status-chip chip-done">Done · 0.94</span></div>
+        <div class="node-title">Find Image (AI)</div>
+        <div class="node-sub">save_button.png</div>
+        <span class="pin left"></span><span class="pin right"></span>
+      </div>
+
+      <div class="node" style="--x:720px; --y:300px; --w:170px; --accent:var(--text-faint);">
+        <div class="node-top"><span class="node-idx">04</span><span class="status-chip chip-running">Running</span></div>
+        <div class="node-title">Image Found?</div>
+        <div class="node-sub">branch</div>
+        <span class="pin left"></span>
+      </div>
+
+      <div class="node muted" style="--x:950px; --y:180px; --w:150px; --accent:var(--copper);">
+        <div class="node-top"><span class="node-idx">05</span><span class="status-chip chip-idle">Idle</span></div>
+        <div class="node-title">Click</div>
+        <div class="node-sub">left · match center</div>
+        <span class="pin left"></span><span class="pin right"></span>
+      </div>
+
+      <div class="node muted" style="--x:1150px; --y:180px; --w:110px; --accent:var(--copper);">
+        <div class="node-top"><span class="node-idx">06</span><span class="status-chip chip-idle">Idle</span></div>
+        <div class="node-title">Type Text</div>
+        <div class="node-sub">"Q3 Report"</div>
+        <span class="pin left"></span>
+      </div>
+
+      <div class="node muted" style="--x:950px; --y:420px; --w:170px; --accent:var(--text-faint);">
+        <div class="node-top"><span class="node-idx">07</span><span class="status-chip chip-idle">Idle</span></div>
+        <div class="node-title">Wait 1s</div>
+        <div class="node-sub">retry, then re-check</div>
+        <span class="pin left"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="inspector">
+    <p class="insp-eyebrow">Vision</p>
+    <h2 class="insp-title">Find Image (AI)</h2>
+
+    <div class="field">
+      <label>Target image</label>
+      <div class="thumb-row">
+        <div class="thumb"></div>
+        <div class="thumb-meta">
+          <div class="fname">save_button.png</div>
+          <button class="link-btn">Recapture</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Match mode</label>
+      <div class="segmented" role="group" aria-label="Match mode">
+        <button>Exact</button>
+        <button>Feature match</button>
+        <button class="active">AI similarity</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Confidence threshold</label>
+      <div class="slider-row">
+        <input type="range" min="0" max="100" value="85" aria-label="Confidence threshold" />
+        <span class="slider-val">0.85</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Search region</label>
+      <div class="coord-grid">
+        <div class="coord-box"><div class="k">X</div><div class="v">412</div></div>
+        <div class="coord-box"><div class="k">Y</div><div class="v">120</div></div>
+        <div class="coord-box"><div class="k">W</div><div class="v">340</div></div>
+        <div class="coord-box"><div class="k">H</div><div class="v">220</div></div>
+      </div>
+      <button class="link-btn" style="margin-top:8px;">Edit region on screen</button>
+    </div>
+
+    <div class="field">
+      <label>Timeout</label>
+      <input class="num-input" value="5.0s" />
+    </div>
+
+    <div class="field">
+      <label>Last run</label>
+      <div class="result-box">
+        <div class="rtitle">Matched</div>
+        <div class="rmeta">(612, 384) · 0.94 confidence</div>
+        <div class="conf-bar"><i></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="statusbar">
+    <span>Zoom 100% · Grid 22px</span>
+    <span class="log">Run #14 · Step <b>4 / 7</b> — Image Found? evaluating result from Find Image (AI)</span>
+    <span class="run-pill"><span class="run-dot"></span>Running</span>
+  </div>
+</div>

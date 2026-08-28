@@ -1,0 +1,48 @@
+[package]
+name = "automation"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+flow-schema = { path = "../flow-schema" }
+vision = { path = "../vision" }
+browser-bridge = { path = "../browser-bridge" }
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+reqwest = { version = "0.13", features = ["blocking"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"
+sha2 = "0.10"
+md-5 = "0.10"
+regex = "1"
+rand = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_HiDpi",
+    "Media_Ocr",
+    "Graphics_Imaging",
+    "Storage_Streams",
+    "Win32_System_WinRT",
+    "Win32_UI_Shell",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "UI_Notifications",
+    "Data_Xml_Dom",
+    "Win32_System_Com",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_System_Variant",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Shutdown",
+    "Win32_System_SystemServices",
+    "Win32_System_Ole",
+    "Win32_System_SystemInformation",
+] }
+uiautomation = "0.11"

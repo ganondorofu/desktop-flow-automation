@@ -172,6 +172,25 @@ impl ExecutionObserver for TauriObserver {
     }
 }
 
+/// Guards against two overlapping `run_flow_yaml` calls — `engine`'s
+/// stop/step/pause state (`debug.rs`'s `STOP_REQUESTED`/`STEP_MODE`/
+/// `RESUME`) is process-global, not per-run, so a second run started
+/// while the first is still going would silently share (and corrupt)
+/// that state with it: stopping one would stop both, a step-through
+/// command meant for one would advance the other. There's exactly one
+/// flow-running slot in this whole process; this is that slot.
+static FLOW_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Flips `FLOW_RUNNING` back off when dropped — guarantees the slot is
+/// released even if `run_flow_yaml` returns early via `?` or the task
+/// panics, not just on its ordinary success path.
+struct RunningGuard;
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        FLOW_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Parses and runs a flow end to end, emitting a `flow-step` event per
 /// step so the GUI reflects real progress rather than a canned demo.
 /// Off the command-dispatch thread for the same reason as
@@ -182,6 +201,10 @@ impl ExecutionObserver for TauriObserver {
 /// until the first `Step.breakpoint` (a plain "実行").
 #[tauri::command]
 async fn run_flow_yaml(app: AppHandle, yaml: String, step_mode: bool) -> Result<(), String> {
+    if FLOW_RUNNING.compare_exchange(false, true, std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst).is_err() {
+        return Err("a flow is already running".to_string());
+    }
+    let _guard = RunningGuard;
     tauri::async_runtime::spawn_blocking(move || {
         let flow: Flow = parse_flow(&yaml).map_err(|e| e.to_string())?;
         let mut observer = TauriObserver { app };
@@ -346,11 +369,6 @@ fn default_flows_dir(app: AppHandle) -> Result<String, String> {
     Ok(flows_dir.to_string_lossy().to_string())
 }
 
-/// The port the companion browser extension's WebSocket connects to.
-/// Fixed rather than configurable for now — matches the port baked
-/// into `browser-extension/background.js`.
-const BROWSER_BRIDGE_PORT: u16 = 17_845;
-
 /// Whether the browser extension currently has a live connection —
 /// lets the UI show "browser bridge: connected/not connected" instead
 /// of a `BrowserClick` step's failure being the first sign anything
@@ -415,8 +433,36 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|_app| {
-            browser_bridge::start_server(BROWSER_BRIDGE_PORT);
+        .setup(|app| {
+            browser_bridge::start_server();
+            // Re-registers on every launch (cheap — a couple of small
+            // file/registry writes) so a moved or reinstalled app
+            // fixes its own native-host registration automatically,
+            // rather than needing a separate install step that can
+            // drift out of sync with where the exe actually lives.
+            //
+            // Tries the installed-resource location first (where
+            // `tauri.conf.json`'s `bundle.resources` actually places
+            // `relay-native-host.exe` once this is a packaged
+            // install, via Tauri's own resource resolver rather than
+            // assuming a particular on-disk layout) before falling
+            // back to "next to this exe" — true for local/dev builds,
+            // where `npm run tauri build`'s `beforeBuildCommand` puts
+            // both binaries in the same `target/release/` directory
+            // but nothing bundles a resource dir at all.
+            let native_host_exe = app
+                .path()
+                .resolve("relay-native-host.exe", tauri::path::BaseDirectory::Resource)
+                .ok()
+                .filter(|p| p.is_file())
+                .or_else(|| std::env::current_exe().ok()?.parent().map(|d| d.join("relay-native-host.exe")));
+            if let Some(native_host_exe) = native_host_exe {
+                if let Err(e) = browser_bridge::native_host_registration::register(&native_host_exe) {
+                    eprintln!("failed to register the browser native-messaging host: {e}");
+                }
+            } else {
+                eprintln!("failed to register the browser native-messaging host: couldn't locate relay-native-host.exe");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

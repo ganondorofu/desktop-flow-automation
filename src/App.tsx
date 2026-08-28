@@ -24,6 +24,7 @@ import {
   cloneNodes,
   connect,
   connectBranchEntry,
+  dangerousActionKinds,
   deleteNode,
   disconnect,
   ensureStartNode,
@@ -49,6 +50,7 @@ import {
   writeFlowFile,
   type RecentFile,
 } from "./data/fileOps";
+import { hashFlowText, isFlowAcknowledged, rememberFlowAcknowledged } from "./data/flowTrust";
 
 type StepEvent =
   | { phase: "start"; step_id: string }
@@ -218,8 +220,8 @@ function App() {
   }
 
   const flowYaml = useMemo(
-    () => buildFlowYaml(flow, "Backend smoke test", positions, stepDelayMs),
-    [flow, positions, stepDelayMs],
+    () => buildFlowYaml(flow, fileName || t("home.untitled"), positions, stepDelayMs),
+    [flow, fileName, positions, stepDelayMs, t],
   );
 
   useEffect(() => {
@@ -327,9 +329,32 @@ function App() {
     setView("editor");
   }
 
+  /** One-time heads-up before opening a flow that can affect the
+   *  machine outside the flow itself (see `dangerousActionKinds`'s
+   *  doc comment) — asked once per distinct flow *content*, then
+   *  remembered, so re-opening the same unmodified file never nags
+   *  again. Mirrors Office's "trusted document" model rather than
+   *  PAD/UiPath's convention of no per-action confirmation at all —
+   *  this only ever runs once at open time, never during a run. */
+  async function confirmDangerousFlow(yaml: string, flow: Branch): Promise<boolean> {
+    const kinds = dangerousActionKinds(flow);
+    if (kinds.length === 0) return true;
+    const hash = await hashFlowText(yaml);
+    if (isFlowAcknowledged(hash)) return true;
+    const actionLabels = kinds
+      .map((kind) => kind.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase()))
+      .map((key) => t(`palette.items.${key}`));
+    const proceed = await confirmDialog(t("home.dangerousFlowWarning", { actions: actionLabels.join(t("home.dangerousFlowSeparator")) }), {
+      kind: "warning",
+    });
+    if (proceed) rememberFlowAcknowledged(hash);
+    return proceed;
+  }
+
   async function loadFlowFromPath(path: string) {
     const text = await readFlowFile(path);
     const { flow: loaded, positions: loadedPositions, stepDelayMs: loadedStepDelayMs } = parseFlowYaml(text);
+    if (!(await confirmDangerousFlow(text, loaded))) return;
     const { branch: repairedFlow, repaired } = ensureStartNode(loaded);
     setFilePath(path);
     setFileName(fileStem(path));

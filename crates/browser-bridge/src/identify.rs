@@ -1,5 +1,5 @@
 //! Identifies which *specific* installed browser (`"chrome"`,
-//! `"comet"`, `"edge"`, `"brave"`, ...) owns a given WebSocket
+//! `"comet"`, `"edge"`, `"brave"`, ...) owns a given named-pipe
 //! connection to this server — needed because [`crate::spawn_instance`]'s
 //! "next connection to arrive" correlation only works when launching
 //! genuinely starts a new OS process. When a `LaunchBrowser` step
@@ -9,57 +9,37 @@
 //! (Chrome *and* Comet, say) each already has the Relay Bridge
 //! extension connected, guessing "whichever connected most recently"
 //! has a real chance of picking the wrong one, silently sending
-//! commands into a browser the flow never asked for. Resolving the
-//! actual OS process behind each connection's local TCP port removes
-//! the guessing entirely — it works regardless of whether a
-//! Chromium fork's `navigator.userAgent` happens to still say
-//! "Chrome" (most do, to avoid breaking sites that sniff it).
+//! commands into a browser the flow never asked for.
+//!
+//! A connection here is never the browser itself, though — Chrome's
+//! Native Messaging spawns a separate small relay process
+//! (`crates/native-host`) per `connectNative()` call, and *that*
+//! process is what actually opens the named pipe. So identifying the
+//! browser takes extra hops past what the WebSocket-based version of
+//! this module used to do: look up the connecting pipe client's own
+//! process id, then walk up its ancestors until one of them is
+//! recognizable as the browser itself. Confirmed empirically (not
+//! just from Chrome's own docs, which don't actually specify this):
+//! on Windows, Chrome doesn't spawn the native-messaging host as a
+//! *direct* child of `chrome.exe` — it goes through `cmd.exe` as an
+//! intermediate launcher first, i.e. `chrome.exe -> cmd.exe ->
+//! relay-native-host.exe`. Stopping at the immediate parent (`cmd`)
+//! instead of walking past it made every reused-connection lookup
+//! fail silently, which in turn made `launch_browser_instance` spawn
+//! a whole new browser process on *every* `LaunchBrowser` step
+//! instead of reusing the one already connected.
 
 #[cfg(windows)]
 mod imp {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::NetworkManagement::IpHelper::{
-        GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
+    use std::os::windows::io::RawHandle;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::Networking::WinSock::AF_INET;
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
     };
-
-    /// Every currently-established loopback TCP connection's local
-    /// port and owning process id, via `GetExtendedTcpTable`.
-    fn tcp_table() -> Vec<(u16, u32)> {
-        unsafe {
-            let mut size: u32 = 0;
-            let _ = GetExtendedTcpTable(None, &mut size, false, AF_INET.0 as u32, TCP_TABLE_OWNER_PID_ALL, 0);
-            if size == 0 {
-                return Vec::new();
-            }
-            let mut buf = vec![0u8; size as usize];
-            let ret = GetExtendedTcpTable(
-                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
-                &mut size,
-                false,
-                AF_INET.0 as u32,
-                TCP_TABLE_OWNER_PID_ALL,
-                0,
-            );
-            if ret != 0 {
-                return Vec::new();
-            }
-            let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-            let num_entries = table.dwNumEntries as usize;
-            let rows = std::slice::from_raw_parts(table.table.as_ptr(), num_entries);
-            rows.iter()
-                .map(|row| {
-                    // `dwLocalPort` packs the port into the low 16 bits
-                    // in network (big-endian) byte order.
-                    let port = u16::from_be((row.dwLocalPort & 0xffff) as u16);
-                    (port, row.dwOwningPid)
-                })
-                .collect()
-        }
-    }
 
     /// The lowercase filename (no extension) of the exe behind `pid`
     /// — e.g. `"chrome"`, `"comet"`, `"msedge"` — or `None` if the
@@ -78,28 +58,132 @@ mod imp {
         }
     }
 
-    /// The browser id (`"chrome"`/`"comet"`/`"edge"`/`"brave"`/...)
-    /// of whichever process owns the *local* end of a loopback TCP
-    /// connection whose peer (this server's) port was `peer_port` —
-    /// i.e. the browser sitting on the other end of a WebSocket
-    /// connection this server accepted from it. `None` if the
-    /// connection has already closed, or the owning process isn't a
-    /// browser this crate recognizes.
-    pub fn browser_id_for_peer_port(peer_port: u16) -> Option<String> {
-        let pid = tcp_table().into_iter().find(|(port, _)| *port == peer_port).map(|(_, pid)| pid)?;
-        let stem = process_exe_stem(pid)?;
-        Some(match stem.as_str() {
-            "msedge" => "edge".to_string(),
-            other => other.to_string(),
+    /// `pid`'s parent process id, via a full process-table snapshot —
+    /// Win32 has no direct "get parent of this pid" call short of the
+    /// undocumented `NtQueryInformationProcess`, so this walks the
+    /// same toolhelp snapshot `tasklist`/Task Manager use instead.
+    fn parent_pid(pid: u32) -> Option<u32> {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+            let mut found = None;
+            if Process32FirstW(snapshot, &mut entry).is_ok() {
+                loop {
+                    if entry.th32ProcessID == pid {
+                        found = Some(entry.th32ParentProcessID);
+                        break;
+                    }
+                    if Process32NextW(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snapshot);
+            found
+        }
+    }
+
+    /// Process names Chrome/Edge are known to interpose between
+    /// themselves and a spawned native-messaging host, on the way up
+    /// the ancestor chain — never the answer itself, just a hop to
+    /// keep walking past.
+    const KNOWN_INTERMEDIARIES: &[&str] = &["cmd", "conhost"];
+
+    /// Maps a browser process's exe stem to the `BrowserInfo::id`
+    /// used everywhere else in this app (`automation::browser_candidates`,
+    /// the Inspector's browser picker, `resolve_browser`, ...) — kept
+    /// as an explicit allowlist rather than accepting whatever name
+    /// turns up first past the known intermediaries, since that would
+    /// misidentify a launcher/updater/helper process sitting between
+    /// the real browser and the native host as the browser itself
+    /// (e.g. an elevation or update-service process, or a shell like
+    /// `powershell`/`explorer` if a user manually spawned the chain).
+    fn known_browser_id(stem: &str) -> Option<&'static str> {
+        Some(match stem {
+            "chrome" => "chrome",
+            "msedge" => "edge",
+            "brave" => "brave",
+            "comet" => "comet",
+            "vivaldi" => "vivaldi",
+            "opera" => "opera",
+            "arc" => "arc",
+            _ => return None,
         })
+    }
+
+    /// How many ancestor hops to walk before giving up — generous
+    /// enough for any intermediary chain actually seen in practice,
+    /// bounded so a pathological/cyclic process table can't spin
+    /// forever.
+    const MAX_ANCESTOR_HOPS: u32 = 6;
+
+    /// The browser id (`"chrome"`/`"comet"`/`"edge"`/`"brave"`/...)
+    /// of whichever ancestor of the process on the other end of
+    /// `pipe_handle` is a *recognized* browser executable — i.e. the
+    /// browser that (however indirectly) spawned the native-host
+    /// relay process holding this pipe connection. `None` if an
+    /// ancestor exits mid-walk, or nothing recognized turns up within
+    /// [`MAX_ANCESTOR_HOPS`] — deliberately not a guess: an
+    /// unrecognized ancestor name (a helper/updater/elevation process,
+    /// or a shell someone used to launch the chain manually) is
+    /// skipped and walked past rather than accepted as the answer.
+    pub fn browser_id_for_pipe_client(pipe_handle: RawHandle) -> Option<String> {
+        let mut client_pid: u32 = 0;
+        unsafe {
+            GetNamedPipeClientProcessId(HANDLE(pipe_handle), &mut client_pid).ok()?;
+        }
+        let mut pid = client_pid;
+        for _ in 0..MAX_ANCESTOR_HOPS {
+            pid = parent_pid(pid)?;
+            let stem = process_exe_stem(pid)?;
+            if KNOWN_INTERMEDIARIES.contains(&stem.as_str()) {
+                continue;
+            }
+            if let Some(id) = known_browser_id(&stem) {
+                return Some(id.to_string());
+            }
+        }
+        None
+    }
+
+    /// True if the process directly on the other end of
+    /// `pipe_handle` is this app's own `relay-native-host.exe` — the
+    /// actual security boundary for `\\.\pipe\relay-bridge`, unlike
+    /// [`browser_id_for_pipe_client`] above (which is best-effort,
+    /// used only for *routing* between several already-accepted
+    /// connections). Without this check, any other local process
+    /// running as the same Windows user could open the pipe directly
+    /// — impersonating the extension (sending fake command replies),
+    /// reading real automation commands headed for the browser, or
+    /// just holding the connection open to deny it to the real host.
+    /// Checked on the *immediate* client, not walked up through
+    /// ancestors like the browser id is: the native host is always
+    /// what actually calls `CreateFile`/connects to the pipe, so
+    /// there's no intermediary to walk past here.
+    pub fn is_registered_native_host(pipe_handle: RawHandle) -> bool {
+        let mut client_pid: u32 = 0;
+        let ok = unsafe { GetNamedPipeClientProcessId(HANDLE(pipe_handle), &mut client_pid) };
+        if ok.is_err() {
+            return false;
+        }
+        process_exe_stem(client_pid).as_deref() == Some("relay-native-host")
     }
 }
 
 #[cfg(not(windows))]
 mod imp {
-    pub fn browser_id_for_peer_port(_peer_port: u16) -> Option<String> {
+    pub fn browser_id_for_pipe_client(_pipe_handle: usize) -> Option<String> {
         None
+    }
+
+    // Non-Windows builds don't actually serve the named pipe at all
+    // (see `lib.rs`), so there's nothing real to verify here — kept
+    // permissive rather than hard-failing a platform this crate isn't
+    // used on in production.
+    pub fn is_registered_native_host(_pipe_handle: usize) -> bool {
+        true
     }
 }
 
-pub use imp::browser_id_for_peer_port;
+pub use imp::{browser_id_for_pipe_client, is_registered_native_host};

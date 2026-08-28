@@ -389,6 +389,20 @@ fn run_action(
                     }
                     a_num / b_num
                 }
+                CalcOp::Round | CalcOp::Floor | CalcOp::Ceil => {
+                    if b_num < 0.0 {
+                        return Err(format!("decimal places {b_num} must not be negative"));
+                    }
+                    let factor = 10f64.powi(b_num.round() as i32);
+                    let scaled = a_num * factor;
+                    let rounded = match op {
+                        CalcOp::Round => scaled.round(),
+                        CalcOp::Floor => scaled.floor(),
+                        CalcOp::Ceil => scaled.ceil(),
+                        _ => unreachable!(),
+                    };
+                    rounded / factor
+                }
             };
             ctx.variables.insert(variable.clone(), result.to_string());
             Ok(Signal::Continue)
@@ -563,9 +577,15 @@ fn run_action(
         Action::WriteClipboard { text } => {
             backend.write_clipboard(&resolve(text, &ctx.variables)).map(|()| Signal::Continue)
         }
-        Action::ShowMessage { title, message } => backend
-            .show_message(&resolve(title, &ctx.variables), &resolve(message, &ctx.variables))
-            .map(|()| Signal::Continue),
+        Action::ShowMessage { title, message, blocking } => {
+            let title = resolve(title, &ctx.variables);
+            let message = resolve(message, &ctx.variables);
+            if *blocking {
+                backend.show_message(&title, &message).map(|()| Signal::Continue)
+            } else {
+                backend.show_message_async(&title, &message).map(|()| Signal::Continue)
+            }
+        }
         Action::ShowConfirm { title, message, variable } => {
             let yes = backend.show_confirm(&resolve(title, &ctx.variables), &resolve(message, &ctx.variables))?;
             ctx.variables.insert(variable.clone(), if yes { "yes".to_string() } else { "no".to_string() });

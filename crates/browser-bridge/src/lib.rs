@@ -1,16 +1,33 @@
-//! A tiny local WebSocket server that bridges the flow engine to a
-//! companion browser extension — the "browser automation" half of
-//! Relay's action set (click/read/fill inside a real, already-open
-//! browser tab) that native Win32 UI Automation has no way to reach,
-//! since a web page's DOM isn't exposed as desktop controls.
+//! A tiny local server that bridges the flow engine to a companion
+//! browser extension — the "browser automation" half of Relay's
+//! action set (click/read/fill inside a real, already-open browser
+//! tab) that native Win32 UI Automation has no way to reach, since a
+//! web page's DOM isn't exposed as desktop controls.
 //!
 //! Deliberately NOT using Chrome DevTools Protocol here: CDP requires
 //! relaunching the browser with a debug flag (a separate profile,
 //! losing the user's actual logged-in session) and fights over the
-//! debug port with any other CDP-based tool already attached. A
-//! WebSocket the extension dials into instead needs no relaunch, no
-//! port negotiation on the browser's side, and works with whatever
-//! tab the user already has open.
+//! debug port with any other CDP-based tool already attached.
+//!
+//! **Transport.** The extension talks to this process via Chrome's
+//! own [Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)
+//! mechanism, not a raw socket the extension dials directly — Chrome
+//! itself spawns a small relay process (`crates/native-host`) for the
+//! *specific* extension id listed in the native-host manifest's
+//! `allowed_origins` (see `register_native_host`), and owns that
+//! process's stdin/stdout for as long as the extension's
+//! `chrome.runtime.connectNative()` port stays open. That relay
+//! process does nothing but copy length-prefixed frames (`framing.rs`
+//! — the exact format Native Messaging itself uses) between its own
+//! stdio and a named pipe this server listens on. Earlier versions of
+//! this crate ran a plain WebSocket server any local process (or, far
+//! worse, any web page in some *other* browser tab — cross-origin
+//! `WebSocket` isn't blocked by the same-origin policy the way
+//! `fetch` is) could dial into directly; Native Messaging's OS-level
+//! process spawning plus the extension-id allowlist closes that off
+//! at the browser boundary, and the named pipe's default ACL
+//! (same user + admins only, no open network port at all) closes off
+//! the rest.
 //!
 //! **Instances.** Each `Browser*` step's `instance` field is set once
 //! — by `LaunchBrowser`, into a flow variable — and then just
@@ -24,9 +41,9 @@
 //! is first minted:
 //!
 //! - If `LaunchBrowser` is spawning a genuinely separate browser
-//!   process (its own window, its own profile) with the Relay Bridge
-//!   extension pre-loaded via `--load-extension`, [`spawn_instance`]
-//!   correlates the resulting connection by *timing*: it registers
+//!   process (its own window, its own profile) whose Relay Bridge
+//!   extension was already installed into that profile beforehand,
+//!   [`spawn_instance`] correlates the resulting connection by *timing*: it registers
 //!   itself as "the next connection belongs to me" immediately before
 //!   spawning the process, and whichever connection arrives next is
 //!   assigned that instance's id. Unambiguous, since nothing else is
@@ -36,8 +53,9 @@
 //!   connection event to correlate with at all, so
 //!   `automation::launch_browser_instance` looks up which existing
 //!   connection is *already* identified (via `identify`, using the
-//!   OS process behind each connection's TCP port — not a guess)
-//!   as the specific browser the step asked for, and reuses that.
+//!   OS process behind each connection's native-host relay — not a
+//!   guess) as the specific browser the step asked for, and reuses
+//!   that.
 //!
 //! A connection that shows up with nothing waiting (the original
 //! zero-config workflow: the user manually loads the extension into a
@@ -54,19 +72,28 @@
 //! the caller happens to be inside some other async context.
 
 mod identify;
+pub mod framing;
+pub mod native_host_registration;
 
-use futures_util::{SinkExt, StreamExt};
 use once_cell::sync::{Lazy, OnceCell};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::os::windows::io::AsRawHandle;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::tungstenite::Message;
+
+/// The well-known rendezvous point between this server and every
+/// `native-host` relay process — not a secret (the pipe name itself
+/// grants no access on its own), just an address. Actual access
+/// control is the pipe's default ACL (this user + admins only) and,
+/// one hop further out, Chrome only ever spawning a relay process at
+/// all for the allow-listed extension id.
+pub const PIPE_NAME: &str = r"\\.\pipe\relay-bridge";
 
 static RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
@@ -100,13 +127,13 @@ struct Bridge {
     /// One entry per live extension connection, keyed by the instance
     /// id `spawn_instance` handed back (or an auto-generated one for
     /// a connection nobody was waiting on).
-    connections: Mutex<HashMap<String, mpsc::UnboundedSender<Message>>>,
+    connections: Mutex<HashMap<String, mpsc::UnboundedSender<String>>>,
     /// The id/order a connection was established in — `None`'s
     /// fallback ("whichever connection is current") is "the highest
     /// value here", i.e. the most recently connected instance.
     connection_order: Mutex<HashMap<String, u64>>,
     /// Which browser (`"chrome"`/`"comet"`/`"edge"`/...) owns each
-    /// connection, identified via `identify::browser_id_for_peer_port`
+    /// connection, identified via `identify::browser_id_for_pipe_client`
     /// — `None` when it couldn't be determined (non-Windows, or the
     /// owning process query failed). Used by `spawn_instance`'s
     /// fallback to pick a same-browser connection instead of
@@ -115,9 +142,16 @@ struct Bridge {
     connection_browser: Mutex<HashMap<String, Option<String>>>,
     next_order: AtomicU64,
     /// Set by `spawn_instance` just before it spawns a process; the
-    /// very next connection to arrive claims this id and fulfills the
-    /// waiting sender instead of being assigned an auto-generated one.
-    awaiting_connect: Mutex<Option<(String, oneshot::Sender<()>)>>,
+    /// next connection identified (via `identify`) as belonging to
+    /// the `String` browser id here claims the instance id and
+    /// fulfills the waiting sender, instead of being assigned an
+    /// auto-generated one. Guards against an unrelated browser's
+    /// extension reconnecting (e.g. after a reload) in the timing gap
+    /// while `spawn_instance` is waiting — without checking the
+    /// browser id, that unrelated reconnect would silently claim the
+    /// slot meant for the browser actually being launched, and the
+    /// caller would end up routing commands into the wrong window.
+    awaiting_connect: Mutex<Option<(String, String, oneshot::Sender<()>)>>,
     pending: Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
 }
 
@@ -138,29 +172,78 @@ fn bridge() -> &'static Bridge {
     BRIDGE.get_or_init(Bridge::new)
 }
 
-/// Starts the WebSocket server on `127.0.0.1:port` — safe to call
-/// more than once (e.g. defensively on every app launch); later calls
-/// are no-ops as long as the first bind succeeded. Only ever binds to
-/// loopback, never accepting a connection from outside this machine.
-pub fn start_server(port: u16) {
+/// Starts the named-pipe server at [`PIPE_NAME`] — safe to call more
+/// than once (e.g. defensively on every app launch); later calls are
+/// no-ops as long as the first pipe instance was created. Every
+/// connection is a `native-host` relay process Chrome itself spawned
+/// (see this module's doc comment) — never a page or process dialing
+/// straight in over the network, since there's no network listener
+/// here at all.
+pub fn start_server() {
+    start_server_at(PIPE_NAME.to_string());
+}
+
+/// The actual implementation, parameterized over the pipe name so
+/// tests can run against a private, uniquely-named pipe instead of
+/// [`PIPE_NAME`] — the real one is a magnet for *actual* browser
+/// connections on a dev machine where Chrome/Comet are sitting there
+/// auto-reconnecting every couple of seconds, which would otherwise
+/// leak real connections into whatever process happens to be
+/// listening on it, tests included.
+fn start_server_at(pipe_name: String) {
     bridge();
     RUNTIME.spawn(async move {
-        let listener = match TcpListener::bind(("127.0.0.1", port)).await {
-            Ok(l) => l,
+        // `first_pipe_instance(true)` on the very first instance only
+        // — refuses to create the pipe at all if some *other* process
+        // already owns this name, instead of quietly coexisting with
+        // it. Without this, a malicious process could pre-create
+        // `PIPE_NAME` before Relay itself starts and sit there
+        // intercepting the connections a `native-host` relay was
+        // actually meant to reach. Safe to require here (and not on
+        // the later per-connection instances below, which are
+        // additional instances of a pipe *this* process already
+        // owns) now that tests run against their own uniquely-named
+        // pipe instead of racing this same call for real.
+        let mut server = match ServerOptions::new().first_pipe_instance(true).create(&pipe_name) {
+            Ok(s) => s,
             Err(e) => {
-                eprintln!("browser-bridge: failed to bind 127.0.0.1:{port}: {e}");
+                eprintln!("browser-bridge: failed to create named pipe {pipe_name}: {e}");
                 return;
             }
         };
         loop {
-            let (stream, _addr) = match listener.accept().await {
-                Ok(pair) => pair,
+            if let Err(e) = server.connect().await {
+                eprintln!("browser-bridge: pipe connect failed: {e}");
+                // The instance that just failed to connect is no
+                // longer usable — replace it before looping back, or
+                // every later `.connect()` call would fail the same
+                // way forever.
+                server = match ServerOptions::new().create(&pipe_name) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("browser-bridge: failed to recreate named pipe {pipe_name}: {e}");
+                        return;
+                    }
+                };
+                continue;
+            }
+            let connected = server;
+            // The next instance has to exist *before* `connected` is
+            // handed off to its own task below — otherwise a client
+            // that tries to connect in the gap between "this instance
+            // just got claimed" and "the next one exists" finds no
+            // pipe instance waiting at all and fails outright, rather
+            // than just waiting its turn. This bit us for real: the
+            // very first connection worked, then every one after it
+            // silently had nothing left to connect to.
+            server = match ServerOptions::new().create(&pipe_name) {
+                Ok(s) => s,
                 Err(e) => {
-                    eprintln!("browser-bridge: accept failed: {e}");
-                    continue;
+                    eprintln!("browser-bridge: failed to create the next named pipe instance: {e}");
+                    return;
                 }
             };
-            RUNTIME.spawn(handle_connection(stream));
+            RUNTIME.spawn(handle_connection(connected));
         }
     });
 }
@@ -189,11 +272,11 @@ pub fn is_connected() -> bool {
 /// could arrive before anyone was watching for it — which only holds
 /// up when the caller already knows this really will be a new
 /// process, not one that might silently delegate to an existing one.
-pub fn spawn_instance(program: &str, args: &[String], timeout: Duration) -> Result<String, String> {
+pub fn spawn_instance(program: &str, args: &[String], timeout: Duration, expected_browser_id: &str) -> Result<String, String> {
     let b = bridge();
     let id = format!("instance_{}", b.next_order.fetch_add(1, Ordering::SeqCst) + 1);
     let (tx, rx) = oneshot::channel();
-    *b.awaiting_connect.lock().unwrap() = Some((id.clone(), tx));
+    *b.awaiting_connect.lock().unwrap() = Some((id.clone(), expected_browser_id.to_string(), tx));
 
     let spawn_result = Command::new(program).args(args).spawn();
     if let Err(e) = spawn_result {
@@ -206,7 +289,7 @@ pub fn spawn_instance(program: &str, args: &[String], timeout: Duration) -> Resu
         Ok(Ok(())) => Ok(id),
         _ => {
             b.awaiting_connect.lock().unwrap().take();
-            Err("browser window opened but its Relay Bridge extension never connected — is the extension installed and enabled in this browser?".into())
+            Err("browser window opened but its Relay Bridge extension never connected — Chrome/Edge no longer support installing an extension automatically (a security restriction added in 2025), so it needs to already be installed and enabled (chrome://extensions) in this exact browser/profile beforehand.".into())
         }
     }
 }
@@ -228,54 +311,84 @@ pub fn find_connection_for_browser(browser_id: &str) -> Option<String> {
         .map(|(id, _)| id.clone())
 }
 
-async fn handle_connection(stream: TcpStream) {
-    let peer_port = stream.peer_addr().ok().map(|addr| addr.port());
-    let ws = match tokio_tungstenite::accept_async(stream).await {
-        Ok(ws) => ws,
-        Err(_) => return,
-    };
-    let (mut write, mut read) = ws.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+async fn handle_connection(pipe: NamedPipeServer) {
+    // Reject any connection that isn't literally this app's own
+    // relay-native-host.exe before doing anything else with it — the
+    // pipe name is public to every process running as the current
+    // Windows user, so without this check any of them could connect
+    // directly and either read automation commands meant for the
+    // browser or post back fake replies. Dropping the pipe here
+    // (never handed off to `handle_connection`'s reader/writer loops,
+    // never registered in `connections`) just closes the connection;
+    // the real native host retries on its own.
+    //
+    // Skipped under `#[cfg(test)]`: the round-trip test below
+    // connects straight from the test binary's own process (there's
+    // no real relay-native-host.exe to spawn in a unit test), so this
+    // exact-process-identity check would reject every test connection
+    // too — it's exercising `send_command`/routing, not this specific
+    // access-control check.
+    #[cfg(not(test))]
+    if !identify::is_registered_native_host(pipe.as_raw_handle()) {
+        eprintln!("browser-bridge: rejected a pipe connection from a process that isn't relay-native-host.exe");
+        return;
+    }
+    let browser_id = identify::browser_id_for_pipe_client(pipe.as_raw_handle());
+    let (mut read_half, mut write_half) = tokio::io::split(pipe);
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
     let b = bridge();
-    let awaited = b.awaiting_connect.lock().unwrap().take();
-    let id = match awaited {
-        Some((id, notify)) => {
-            let _ = notify.send(());
-            id
-        }
-        // Nobody was waiting — either the zero-config workflow (the
-        // user loaded the extension into a browser by hand) or an
-        // extension reconnecting after a reload. Either way it still
-        // gets its own id and becomes the new "most recent" default.
-        None => format!("auto_{}", b.next_order.fetch_add(1, Ordering::SeqCst) + 1),
+    // Only take the waiting slot if this connection is either
+    // confirmed to be the expected browser, or identification simply
+    // couldn't determine which browser it is (best-effort — see
+    // `identify`'s doc comments on why that can legitimately happen).
+    // A connection positively identified as some *other* browser is
+    // never allowed to claim it, even if nobody else has connected
+    // yet — it falls through to the auto-id path below instead, and
+    // `spawn_instance` keeps waiting for the real one until its
+    // timeout.
+    let claimed = {
+        let mut awaiting = b.awaiting_connect.lock().unwrap();
+        let claims_awaited = awaiting
+            .as_ref()
+            .is_some_and(|(_, expected, _)| browser_id.as_deref().is_none_or(|actual| actual == expected));
+        if claims_awaited { awaiting.take() } else { None }
+    };
+    let id = if let Some((id, _, notify)) = claimed {
+        let _ = notify.send(());
+        id
+    } else {
+        // Nobody (matching) was waiting — either the zero-config
+        // workflow (the user loaded the extension into a browser by
+        // hand), an extension reconnecting after a reload, or a
+        // different browser than the one `spawn_instance` is
+        // currently waiting for. Either way it still gets its own id
+        // and becomes the new "most recent" default.
+        format!("auto_{}", b.next_order.fetch_add(1, Ordering::SeqCst) + 1)
     };
 
     b.connections.lock().unwrap().insert(id.clone(), tx.clone());
     b.connection_order.lock().unwrap().insert(id.clone(), b.next_order.fetch_add(1, Ordering::SeqCst));
-    let browser_id = peer_port.and_then(identify::browser_id_for_peer_port);
     b.connection_browser.lock().unwrap().insert(id.clone(), browser_id);
 
     let writer = async {
-        while let Some(msg) = rx.recv().await {
-            if write.send(msg).await.is_err() {
+        while let Some(text) = rx.recv().await {
+            if framing::write_frame(&mut write_half, text.as_bytes()).await.is_err() {
                 break;
             }
         }
     };
 
     let reader = async {
-        while let Some(Ok(msg)) = read.next().await {
-            if let Message::Text(text) = msg {
-                if let Ok(reply) = serde_json::from_str::<Reply>(&text) {
-                    if let Some(sender) = bridge().pending.lock().unwrap().remove(&reply.id) {
-                        let result = if reply.ok {
-                            Ok(reply.result)
-                        } else {
-                            Err(reply.error.unwrap_or_else(|| "unknown error".into()))
-                        };
-                        let _ = sender.send(result);
-                    }
+        while let Ok(Some(bytes)) = framing::read_frame(&mut read_half).await {
+            if let Ok(reply) = serde_json::from_slice::<Reply>(&bytes) {
+                if let Some(sender) = bridge().pending.lock().unwrap().remove(&reply.id) {
+                    let result = if reply.ok {
+                        Ok(reply.result)
+                    } else {
+                        Err(reply.error.unwrap_or_else(|| "unknown error".into()))
+                    };
+                    let _ = sender.send(result);
                 }
             }
         }
@@ -313,13 +426,21 @@ pub fn send_command_with_timeout(instance: Option<&str>, action: &str, params: V
     let (tx, rx) = oneshot::channel();
     bridge.pending.lock().unwrap().insert(id.clone(), tx);
 
-    let sender = resolve_sender(bridge, instance);
-    let Some(sender) = sender else {
-        bridge.pending.lock().unwrap().remove(&id);
-        return Err(match instance {
-            Some(instance) => format!("browser instance '{instance}' is not connected (closed?)"),
-            None => "browser extension is not connected — open a tab with the Relay Bridge extension enabled, or add a Launch Browser step".into(),
-        });
+    let sender = match resolve_sender(bridge, instance) {
+        SenderResolution::Found(sender) => sender,
+        SenderResolution::NoneConnected => {
+            bridge.pending.lock().unwrap().remove(&id);
+            return Err(match instance {
+                Some(instance) => format!("browser instance '{instance}' is not connected (closed?)"),
+                None => "browser extension is not connected — open a tab with the Relay Bridge extension enabled, or add a Launch Browser step".into(),
+            });
+        }
+        SenderResolution::Ambiguous(count) => {
+            bridge.pending.lock().unwrap().remove(&id);
+            return Err(format!(
+                "{count} browser connections are open at once, so this step needs an explicit instance to know which one to use — set it to the variable a Launch Browser step saved, e.g. %browser_tab%"
+            ));
+        }
     };
 
     let envelope = Envelope {
@@ -328,7 +449,7 @@ pub fn send_command_with_timeout(instance: Option<&str>, action: &str, params: V
         params,
     };
     let text = serde_json::to_string(&envelope).map_err(|e| e.to_string())?;
-    if sender.send(Message::Text(text)).is_err() {
+    if sender.send(text).is_err() {
         bridge.pending.lock().unwrap().remove(&id);
         return Err("failed to send command to browser extension".into());
     }
@@ -345,17 +466,41 @@ pub fn send_command_with_timeout(instance: Option<&str>, action: &str, params: V
     })
 }
 
-fn resolve_sender(bridge: &Bridge, instance: Option<&str>) -> Option<mpsc::UnboundedSender<Message>> {
+enum SenderResolution {
+    Found(mpsc::UnboundedSender<String>),
+    NoneConnected,
+    /// `instance: None` with more than one connection currently open —
+    /// picking "whichever connected most recently" used to be a safe
+    /// bet back when only one browser process ever dialed in at a
+    /// time, but Native Messaging makes it routine for more than one
+    /// browser (Chrome *and* some Chromium fork, say) to each have
+    /// their own connection open simultaneously. Silently guessing
+    /// wrong here doesn't fail loudly — it sends a command into
+    /// whatever tab happens to be "most recent" instead of the one a
+    /// flow author actually meant, so a later step addressing a
+    /// specific instance ends up looking at a page that was never
+    /// actually navigated. Erroring instead makes that mistake
+    /// visible immediately, at the step that's actually ambiguous,
+    /// instead of several steps later as a confusing "element not
+    /// found".
+    Ambiguous(usize),
+}
+
+fn resolve_sender(bridge: &Bridge, instance: Option<&str>) -> SenderResolution {
     let connections = bridge.connections.lock().unwrap();
     match instance {
-        Some(id) => connections.get(id).cloned(),
+        Some(id) => connections.get(id).cloned().map_or(SenderResolution::NoneConnected, SenderResolution::Found),
         None => {
+            if connections.len() > 1 {
+                return SenderResolution::Ambiguous(connections.len());
+            }
             let order = bridge.connection_order.lock().unwrap();
             order
                 .iter()
                 .max_by_key(|(_, seq)| **seq)
                 .and_then(|(id, _)| connections.get(id))
                 .cloned()
+                .map_or(SenderResolution::NoneConnected, SenderResolution::Found)
         }
     }
 }
@@ -370,50 +515,61 @@ mod tests {
     /// statics — running independent tests would let cargo's default
     /// parallel test threads race on that shared state. In order:
     /// prove a command fails fast with nothing connected, connect a
-    /// fake "extension" client that echoes back a canned success
-    /// reply and prove `send_command(None, ...)` round-trips through
-    /// the real WebSocket loop end to end, then connect a *second*
-    /// fake client and prove each instance is addressable
-    /// independently by id while `None` still reaches whichever
-    /// connected most recently.
+    /// fake "native-host relay" client that echoes back a canned
+    /// success reply and prove `send_command(None, ...)` round-trips
+    /// through the real named-pipe loop end to end, then connect a
+    /// *second* fake client and prove each instance is addressable
+    /// independently by id — and that `None` now refuses to guess
+    /// once there's more than one connection to guess between.
     #[test]
     fn send_command_round_trips_and_addresses_instances_independently() {
-        let port = 17_882;
-        start_server(port);
-        // Give the listener a moment to bind.
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        // A private, uniquely-named pipe rather than `PIPE_NAME` — on
+        // a dev machine with the real extension installed, Chrome/
+        // Comet auto-reconnect every couple of seconds and would
+        // otherwise dial straight into this test's own server the
+        // moment it starts listening on the real name, polluting the
+        // connection count this test asserts on.
+        let pipe_name = format!(r"\\.\pipe\relay-bridge-test-{}", std::process::id());
+        start_server_at(pipe_name.clone());
+        // Give the listener a moment to create the first pipe instance.
         std::thread::sleep(Duration::from_millis(200));
 
         let disconnected = send_command(None, "click", json!({}));
         assert!(disconnected.is_err());
 
-        async fn mock_extension(port: u16, tag: &'static str) {
-            let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.expect("mock extension failed to connect");
-            let (mut write, mut read) = ws.split();
-            while let Some(Ok(Message::Text(text))) = read.next().await {
-                let req: Value = serde_json::from_str(&text).unwrap();
+        async fn mock_native_host(tag: &'static str, pipe_name: String) {
+            let client = ClientOptions::new().open(&pipe_name).expect("mock native-host relay failed to connect");
+            let (mut read_half, mut write_half) = tokio::io::split(client);
+            while let Ok(Some(bytes)) = framing::read_frame(&mut read_half).await {
+                let req: Value = serde_json::from_slice(&bytes).unwrap();
                 let reply = json!({
                     "id": req["id"],
                     "ok": true,
                     "result": format!("echo:{tag}:{}", req["action"].as_str().unwrap()),
                 });
-                if write.send(Message::Text(reply.to_string())).await.is_err() {
+                if framing::write_frame(&mut write_half, reply.to_string().as_bytes()).await.is_err() {
                     break;
                 }
             }
         }
 
-        RUNTIME.spawn(mock_extension(port, "first"));
+        RUNTIME.spawn(mock_native_host("first", pipe_name.clone()));
         std::thread::sleep(Duration::from_millis(300));
 
         let result = send_command(None, "click", json!({ "selector": "#go" }));
         assert_eq!(result, Ok(Value::String("echo:first:click".into())));
 
-        RUNTIME.spawn(mock_extension(port, "second"));
+        RUNTIME.spawn(mock_native_host("second", pipe_name.clone()));
         std::thread::sleep(Duration::from_millis(300));
 
-        // `None` now reaches the second (more recently connected) client.
+        // With two connections open at once, `None` is now ambiguous —
+        // silently guessing "whichever is most recent" is exactly the
+        // footgun that let a real flow send a step to the wrong
+        // browser (see `SenderResolution::Ambiguous`'s doc comment).
         let result = send_command(None, "click", json!({}));
-        assert_eq!(result, Ok(Value::String("echo:second:click".into())));
+        assert!(result.is_err());
 
         // Both auto-assigned instance ids are still individually addressable.
         let ids: Vec<String> = bridge().connections.lock().unwrap().keys().cloned().collect();

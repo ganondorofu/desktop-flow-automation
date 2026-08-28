@@ -173,7 +173,14 @@ function parseStepAction(raw: unknown): FlowNode {
     case "write_clipboard":
       return { id, kind: "write_clipboard", text: String(s.text ?? ""), enabled };
     case "show_message":
-      return { id, kind: "show_message", title: String(s.title ?? ""), message: String(s.message ?? ""), enabled };
+      return {
+        id,
+        kind: "show_message",
+        title: String(s.title ?? ""),
+        message: String(s.message ?? ""),
+        blocking: s.blocking === undefined ? true : Boolean(s.blocking),
+        enabled,
+      };
     case "show_confirm":
       return {
         id,

@@ -22,6 +22,8 @@ import { CenteredEdge, type CenteredEdgeData } from "./CenteredEdge";
 import type { TerminalNodeData } from "../data/canvasTypes";
 import {
   describeNode,
+  nodeIsIncomplete,
+  duplicateFunctionDefIds,
   findBranchOwner,
   findContainer,
   findNode,
@@ -77,6 +79,7 @@ interface LayoutCtx {
   onDelete: (id: string) => void;
   edgeShape: CenteredEdgeData["shape"];
   nodeNameMode: NodeNameMode;
+  duplicateFunctionDefIds: Set<string>;
 }
 
 /** Describes the wire leading into whatever node gets laid out next —
@@ -180,6 +183,7 @@ function pushNode(
       enabled: item.enabled,
       breakpoint: item.breakpoint === true,
       comment: item.comment,
+      incomplete: nodeIsIncomplete(item) || ctx.duplicateFunctionDefIds.has(item.id),
       status: (ctx.liveStatus[item.id] as TerminalNodeData["status"]) ?? "idle",
     } as TerminalNodeData,
   });
@@ -729,7 +733,15 @@ export function computeAutoPositions(
     // Node-name mode doesn't affect where anything is positioned (the
     // node box is a fixed size regardless of label text) — any value
     // works here.
-    { t, selectedIds: new Set(), liveStatus: {}, onDelete: () => {}, edgeShape: "straight", nodeNameMode: "beginner" },
+    {
+      t,
+      selectedIds: new Set(),
+      liveStatus: {},
+      onDelete: () => {},
+      edgeShape: "straight",
+      nodeNameMode: "beginner",
+      duplicateFunctionDefIds: new Set(),
+    },
     null,
     orientation,
   );
@@ -801,18 +813,28 @@ export function Canvas({
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  const duplicateFnIds = useMemo(() => duplicateFunctionDefIds(flow), [flow]);
+
   const layout = useMemo(
     () =>
       layoutBranch(
         flow,
         40,
         300,
-        { t, selectedIds: selectedSet, liveStatus, onDelete: onDeleteStep, edgeShape: EDGE_SHAPE_OF[edgeStyle], nodeNameMode },
+        {
+          t,
+          selectedIds: selectedSet,
+          liveStatus,
+          onDelete: onDeleteStep,
+          edgeShape: EDGE_SHAPE_OF[edgeStyle],
+          nodeNameMode,
+          duplicateFunctionDefIds: duplicateFnIds,
+        },
         null,
         orientation,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [flow, selectedSet, liveStatus, t, i18n.language, edgeStyle, orientation, nodeNameMode],
+    [flow, selectedSet, liveStatus, t, i18n.language, edgeStyle, orientation, nodeNameMode, duplicateFnIds],
   );
 
   // Nodes are always freely draggable — a node keeps its manually-set

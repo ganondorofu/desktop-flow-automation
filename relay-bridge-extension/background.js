@@ -1,25 +1,29 @@
-// Relay Bridge — connects this browser to the Relay desktop app over a
-// local WebSocket, so a `Browser*` flow step can navigate, click,
-// read, and fill a specific tab. A `LaunchBrowser` step opens that
-// tab via `open_tab` (below), which hands back the tab's real Chrome
-// id; later `Browser*` steps address it by that id through
+// Relay Bridge — connects this browser to the Relay desktop app via
+// Chrome's Native Messaging, so a `Browser*` flow step can navigate,
+// click, read, and fill a specific tab. A `LaunchBrowser` step opens
+// that tab via `open_tab` (below), which hands back the tab's real
+// Chrome id; later `Browser*` steps address it by that id through
 // `params.tabId` (see `resolveTabId`). This two-layer addressing
 // exists because `LaunchBrowser` can either spawn a genuinely
 // separate browser process (its own window, its own
-// `--user-data-dir` profile — a distinct WebSocket connection the
-// Relay app picks between, see `browser-bridge`'s doc comment) *or*,
-// when no dedicated profile is requested, just open another tab in
-// whatever instance of the user's own browser is already running —
-// in which case several `LaunchBrowser` instances end up sharing this
-// one extension connection, and `params.tabId` is the only thing that
+// `--user-data-dir` profile — a distinct connection the Relay app
+// picks between, see `browser-bridge`'s doc comment) *or*, when no
+// dedicated profile is requested, just open another tab in whatever
+// instance of the user's own browser is already running — in which
+// case several `LaunchBrowser` instances end up sharing this one
+// extension connection, and `params.tabId` is the only thing that
 // still tells them apart.
 //
-// Why WebSocket instead of Chrome's Native Messaging: native messaging
-// needs a host manifest registered in the OS registry pointing at a
-// helper executable, which is one more install step and one more thing
-// that can go stale after an update. A plain WebSocket the app already
-// listens on needs no OS-level registration at all — install this
-// extension once, and it finds the app whenever it's running.
+// Why Native Messaging rather than a plain WebSocket the app listens
+// on: a WebSocket server any local process can dial into is also a
+// WebSocket server any *web page* (in some other, unrelated tab) can
+// dial into — cross-origin `WebSocket` isn't blocked by the
+// same-origin policy the way `fetch` is, so only the server checking
+// `Origin` would stop that, and nothing stops a non-browser local
+// process either. Native Messaging's host is spawned by Chrome itself,
+// only for the specific extension id listed in the host manifest's
+// `allowed_origins` — no open network port, no page or process able
+// to impersonate this extension by guessing a port number.
 //
 // Why not just leave the tab's own dev tools open and drive it via
 // CDP: CDP requires relaunching the browser with a debug flag (a
@@ -29,46 +33,65 @@
 // browser the user already has open, with whatever tab and session
 // they're already using.
 
-const PORT = 17845;
-let ws = null;
+const HOST_NAME = "dev.relay.app.bridge";
+let port = null;
 let reconnectTimer = null;
 
 function connect() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  ws = new WebSocket(`ws://127.0.0.1:${PORT}`);
-
-  ws.onopen = () => {
-    console.log("[Relay Bridge] connected to the Relay app");
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  };
-
-  ws.onclose = () => {
+  console.log("[Relay Bridge] connect() called, port =", port);
+  if (port) return;
+  try {
+    port = chrome.runtime.connectNative(HOST_NAME);
+    console.log("[Relay Bridge] connectNative() returned a port, waiting for it to settle…");
+  } catch (err) {
+    console.error("[Relay Bridge] connectNative() threw synchronously:", err);
     scheduleReconnect();
-  };
+    return;
+  }
 
-  ws.onerror = () => {
-    // onclose fires right after; the reconnect is scheduled there.
-    ws.close();
-  };
-
-  ws.onmessage = async (event) => {
-    let request;
-    try {
-      request = JSON.parse(event.data);
-    } catch {
-      return;
-    }
+  // Captures `port` into `replyPort` right away, rather than reading
+  // the outer `let port` again after `await runAction` returns —
+  // `runAction` can take a while (a navigation, a wait_for_selector
+  // poll), and if this port disconnects/reconnects in the meantime
+  // (a service-worker restart, Relay restarting, ...) the outer
+  // `port` variable gets reassigned to the *new* connection or to
+  // `null`. Replying on whatever it points to by then would either
+  // post the response to a connection that never saw the request (a
+  // reply the Relay side can't match to anything real, since it comes
+  // in with the old request's `id` on a port whose `pending` map
+  // doesn't have it) or throw on a `null` port. Replying on the
+  // specific port that actually received the request avoids both.
+  const replyPort = port;
+  replyPort.onMessage.addListener(async (request) => {
+    console.log("[Relay Bridge] received command:", request);
     const { id, action, params } = request;
+    let message;
     try {
       const result = await runAction(action, params ?? {});
-      ws.send(JSON.stringify({ id, ok: true, result }));
+      message = { id, ok: true, result };
     } catch (err) {
-      ws.send(JSON.stringify({ id, ok: false, error: String((err && err.message) || err) }));
+      message = { id, ok: false, error: String((err && err.message) || err) };
     }
-  };
+    try {
+      replyPort.postMessage(message);
+    } catch (err) {
+      // The port disconnected while `runAction` was still running —
+      // nothing to reply to anymore; the native host on the other end
+      // is gone too, so there's no reconnect-and-retry that would help.
+      console.warn("[Relay Bridge] couldn't post reply, port already disconnected:", err);
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    // chrome.runtime.lastError is set here when the native host
+    // never started at all (e.g. Relay isn't running, or isn't
+    // registered) — surfaced to the console rather than left silent,
+    // since there's otherwise no sign anything went wrong until a
+    // flow step times out.
+    console.log("[Relay Bridge] port disconnected, lastError =", chrome.runtime.lastError);
+    port = null;
+    scheduleReconnect();
+  });
 }
 
 function scheduleReconnect() {
@@ -79,10 +102,12 @@ function scheduleReconnect() {
   }, 2000);
 }
 
-// A Manifest V3 service worker gets suspended after ~30s of
-// inactivity, silently dropping the WebSocket with it. This alarm
-// periodically wakes the worker back up so a dropped connection
-// doesn't stay dropped for longer than the alarm interval.
+// A Manifest V3 service worker gets suspended after periods of
+// inactivity — a live `connectNative` port is supposed to keep it
+// alive on its own, but this alarm is a cheap defensive fallback in
+// case that connection ever silently drops without a disconnect event
+// (kept from the WebSocket-based version, where it was load-bearing
+// rather than just a backstop).
 chrome.alarms.create("relay-bridge-keepalive", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener(() => connect());
 chrome.runtime.onStartup.addListener(() => connect());
@@ -116,19 +141,49 @@ async function resolveTabId(params) {
   return tabId;
 }
 
+const TAB_LOAD_TIMEOUT_MS = 30000;
+
+// Navigation can hang forever (a page that never fires "complete"), and
+// the tab can be closed by the user mid-wait — neither used to be
+// handled, so the listener leaked and the calling flow step hung
+// indefinitely instead of failing. Both paths now clean up every
+// listener and settle the promise one way or another.
 function waitForTabLoad(tabId) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    function cleanup() {
+      chrome.tabs.onUpdated.removeListener(updateListener);
+      chrome.tabs.onRemoved.removeListener(removeListener);
+      clearTimeout(timer);
+    }
     function finish() {
-      chrome.tabs.onUpdated.removeListener(listener);
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve();
     }
-    function listener(id, info) {
+    function fail(message) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(message));
+    }
+    function updateListener(id, info) {
       if (id === tabId && info.status === "complete") finish();
     }
-    chrome.tabs.onUpdated.addListener(listener);
+    function removeListener(id) {
+      if (id === tabId) fail(`tab ${tabId} was closed before it finished loading`);
+    }
+    const timer = setTimeout(() => fail(`tab ${tabId} did not finish loading within ${TAB_LOAD_TIMEOUT_MS}ms`), TAB_LOAD_TIMEOUT_MS);
+    chrome.tabs.onUpdated.addListener(updateListener);
+    chrome.tabs.onRemoved.addListener(removeListener);
     // In case navigation already finished before this listener attached.
     chrome.tabs.get(tabId, (tab) => {
-      if (tab && tab.status === "complete") finish();
+      if (chrome.runtime.lastError) {
+        fail(`tab ${tabId} no longer exists`);
+      } else if (tab && tab.status === "complete") {
+        finish();
+      }
     });
   });
 }

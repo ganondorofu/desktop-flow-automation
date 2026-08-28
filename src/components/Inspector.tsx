@@ -7,6 +7,9 @@ import {
   describeNode,
   findNode,
   isDuplicateFunctionName,
+  nodeMissingFieldKeys,
+  MISSING_ELEMENT_SELECTOR,
+  MISSING_SYSTEM_INFO_FIELD,
   type Branch,
   type FlowNode,
   type NodeNameMode,
@@ -60,6 +63,17 @@ export function Inspector({ flow, selectedIds, onUpdateStep, onDeleteStep, onDel
 
   const { title, sub } = describeNode(node, t, nodeNameMode);
 
+  const missingFieldKeys = nodeMissingFieldKeys(node);
+  const missingFieldLabels = missingFieldKeys.map((key) => {
+    if (key === MISSING_ELEMENT_SELECTOR) {
+      return `${t("inspector.fields.elementName")} / ${t("inspector.fields.automationId")}`;
+    }
+    if (key === MISSING_SYSTEM_INFO_FIELD) {
+      return t("inspector.fields.systemInfoNoneSelected");
+    }
+    return t(`inspector.fields.${key}`);
+  });
+
   return (
     <div className="inspector">
       <div className="insp-head">
@@ -93,6 +107,12 @@ export function Inspector({ flow, selectedIds, onUpdateStep, onDeleteStep, onDel
           {t("inspector.mode.detailed")}
         </button>
       </div>
+
+      {missingFieldLabels.length > 0 && (
+        <p className="insp-hint insp-warning">
+          {t("inspector.missingFields", { fields: missingFieldLabels.join(t("inspector.missingFieldsSeparator")) })}
+        </p>
+      )}
 
       <NodeFields
         node={node}

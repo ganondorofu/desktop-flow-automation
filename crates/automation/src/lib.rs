@@ -30,6 +30,7 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::PCWSTR;
 use std::os::windows::ffi::OsStrExt;
+use std::os::windows::process::CommandExt;
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, EnumDisplayMonitors, GetDC,
     GetDIBits, MonitorFromPoint, ReleaseDC, SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
@@ -391,6 +392,22 @@ unsafe fn window_text(hwnd: HWND) -> String {
     String::from_utf16_lossy(&buf[..copied as usize])
 }
 
+/// `CREATE_NO_WINDOW` — for a console helper this crate shells out to
+/// on the user's behalf (`ping`, `tasklist`, ...), not one the flow is
+/// deliberately launching as a visible target app (`launch_app`
+/// itself never uses this). Without it, `Command` still allocates a
+/// console for a console-subsystem child, so a plain `cmd`/
+/// `powershell` call flashes a real window on screen for however long
+/// it runs — invisible to the flow author's log, but very visible on
+/// their desktop.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn hidden_command(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 /// Starts a new process at `path`. `args` is split on whitespace and
 /// passed through as-is — no shell, no quoting rules to worry about,
 /// just argv the way `Command` expects it.
@@ -419,7 +436,7 @@ pub struct BrowserInfo {
 /// extension APIs differ enough from Chrome's that the bundled Relay
 /// Bridge extension (a Manifest V3 Chrome extension) wouldn't load
 /// into it unmodified.
-fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
+fn browser_candidates() -> Vec<(&'static str, &'static str, &'static str, Vec<String>)> {
     let program_files = std::env::var("ProgramFiles").unwrap_or_default();
     let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_default();
     let local_app_data = std::env::var("LocalAppData").unwrap_or_default();
@@ -427,6 +444,7 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "chrome",
             "Google Chrome",
+            "chrome.exe",
             vec![
                 format!(r"{program_files}\Google\Chrome\Application\chrome.exe"),
                 format!(r"{program_files_x86}\Google\Chrome\Application\chrome.exe"),
@@ -436,6 +454,7 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "edge",
             "Microsoft Edge",
+            "msedge.exe",
             vec![
                 format!(r"{program_files_x86}\Microsoft\Edge\Application\msedge.exe"),
                 format!(r"{program_files}\Microsoft\Edge\Application\msedge.exe"),
@@ -444,6 +463,7 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "brave",
             "Brave",
+            "brave.exe",
             vec![
                 format!(r"{program_files}\BraveSoftware\Brave-Browser\Application\brave.exe"),
                 format!(r"{program_files_x86}\BraveSoftware\Brave-Browser\Application\brave.exe"),
@@ -453,11 +473,13 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "comet",
             "Comet",
+            "comet.exe",
             vec![format!(r"{local_app_data}\Perplexity\Comet\Application\comet.exe")],
         ),
         (
             "vivaldi",
             "Vivaldi",
+            "vivaldi.exe",
             vec![
                 format!(r"{local_app_data}\Vivaldi\Application\vivaldi.exe"),
                 format!(r"{program_files}\Vivaldi\Application\vivaldi.exe"),
@@ -466,6 +488,7 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "opera",
             "Opera",
+            "opera.exe",
             vec![
                 format!(r"{local_app_data}\Programs\Opera\opera.exe"),
                 format!(r"{program_files}\Opera\opera.exe"),
@@ -474,37 +497,90 @@ fn browser_candidates() -> Vec<(&'static str, &'static str, Vec<String>)> {
         (
             "arc",
             "Arc",
+            "Arc.exe",
             vec![format!(r"{local_app_data}\Programs\Arc\Arc.exe")],
         ),
     ]
 }
 
+/// Looks up `exe_filename` (e.g. `"chrome.exe"`) in the registry's
+/// `App Paths` key — the same mechanism Windows itself uses to
+/// resolve a bare exe name typed into Run or the shell, and the way
+/// most Chromium-based installers (including ones at custom install
+/// locations or per-user installs) register themselves regardless of
+/// where their files actually live. Checked before the hardcoded
+/// path list below so a non-default install location is still found;
+/// the hardcoded paths remain only as a fallback for the rare
+/// installer that skips this registration.
+#[cfg(windows)]
+fn app_path_from_registry(exe_filename: &str) -> Option<String> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    use winreg::RegKey;
+    let subkey = format!(r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_filename}");
+    for hive in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        if let Ok(key) = RegKey::predef(hive).open_subkey(&subkey) {
+            if let Ok(path) = key.get_value::<String, _>("") {
+                if std::path::Path::new(&path).is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn app_path_from_registry(_exe_filename: &str) -> Option<String> {
+    None
+}
+
+/// An explicit override for a browser's exe path, so a browser
+/// installed somewhere neither the registry nor the hardcoded
+/// fallback list can find it (a portable build, an unusual install
+/// location) can still be used — set `RELAY_BROWSER_<ID>_PATH`
+/// (e.g. `RELAY_BROWSER_COMET_PATH`) to the full exe path.
+fn app_path_from_env_override(id: &str) -> Option<String> {
+    let var = format!("RELAY_BROWSER_{}_PATH", id.to_uppercase());
+    std::env::var(var).ok().filter(|p| std::path::Path::new(p).is_file())
+}
+
 /// Every Chromium-family browser actually found installed on this
 /// machine, in a stable preference order (Chrome, then Edge) — feeds
-/// the Inspector's browser picker for `LaunchBrowser`.
+/// the Inspector's browser picker for `LaunchBrowser`. For each
+/// candidate, tries (in order) an explicit env-var override, the
+/// registry's `App Paths` registration, then the hardcoded
+/// well-known install locations.
 pub fn find_installed_browsers() -> Vec<BrowserInfo> {
     browser_candidates()
         .into_iter()
-        .filter_map(|(id, name, paths)| {
-            paths
-                .into_iter()
-                .find(|p| std::path::Path::new(p).is_file())
-                .map(|path| BrowserInfo { id: id.into(), name: name.into(), path })
+        .filter_map(|(id, name, exe_filename, fallback_paths)| {
+            let path = app_path_from_env_override(id)
+                .or_else(|| app_path_from_registry(exe_filename))
+                .or_else(|| fallback_paths.into_iter().find(|p| std::path::Path::new(p).is_file()))?;
+            Some(BrowserInfo { id: id.into(), name: name.into(), path })
         })
         .collect()
 }
 
-/// Resolves `browser` (a `BrowserInfo::id`) to its exe path, falling
-/// back to the first installed browser found when `browser` is
-/// `None`/empty/unrecognized — an empty or stale-saved browser choice
-/// is far more likely than a flow author deliberately wanting that
-/// fallback to fail loudly.
+/// Resolves `browser` (a `BrowserInfo::id`) to its exe path — falls
+/// back to the first installed browser found only when `browser`
+/// itself is `None`/empty (an unset/stale-saved choice), but fails
+/// loudly if it names a specific browser that isn't actually
+/// installed, rather than silently launching a different one instead.
 fn resolve_browser(browser: Option<&str>) -> Result<BrowserInfo, AutomationError> {
     let installed = find_installed_browsers();
     if let Some(id) = browser.filter(|s| !s.trim().is_empty()) {
-        if let Some(found) = installed.iter().find(|b| b.id == id) {
-            return Ok(found.clone());
-        }
+        // A specific browser was asked for by id — finding a
+        // *different* one instead and silently launching that would
+        // send a `LaunchBrowser` step's automation into a browser the
+        // flow never asked for (no extension connected there yet,
+        // possibly a different logged-in session entirely), with
+        // nothing about the failure mode hinting that's what
+        // happened. Fail loudly instead of guessing.
+        return installed
+            .into_iter()
+            .find(|b| b.id == id)
+            .ok_or_else(|| AutomationError(format!("'{id}' isn't installed (or isn't a browser Relay recognizes) on this machine")));
     }
     installed
         .into_iter()
@@ -512,37 +588,14 @@ fn resolve_browser(browser: Option<&str>) -> Result<BrowserInfo, AutomationError
         .ok_or_else(|| AutomationError("no supported browser (Chrome or Edge) found installed on this machine".into()))
 }
 
-/// The Relay Bridge extension's unpacked directory, so it can be
-/// handed to `--load-extension`. Only resolves it relative to the
-/// running exe's own location (this repo's dev/local-build layout —
-/// `target/release/relay.exe` alongside a `browser-extension/`
-/// directory a few levels up); a packaged installer build would need
-/// to instead bundle this as a Tauri resource and resolve it via the
-/// app's resource directory, which hasn't been set up yet.
-fn resolve_extension_dir() -> Result<std::path::PathBuf, AutomationError> {
-    let exe = std::env::current_exe().map_err(|e| AutomationError(format!("couldn't locate Relay's own exe: {e}")))?;
-    let mut dir = exe.as_path();
-    for _ in 0..6 {
-        let Some(parent) = dir.parent() else { break };
-        let candidate = parent.join("browser-extension");
-        if candidate.join("manifest.json").is_file() {
-            return Ok(candidate);
-        }
-        dir = parent;
-    }
-    Err(AutomationError(
-        "couldn't find the browser-extension/ folder relative to Relay's exe — this only works in a dev/local build of this repo".into(),
-    ))
-}
-
 /// Gets a connection to `browser` — reusing an already-connected one
-/// for the default-profile case (see below), or else spawning a fresh
-/// browser window with the Relay Bridge extension pre-loaded via
-/// `--load-extension` and waiting for it to connect — then explicitly
-/// asks it to open `url` in a fresh tab via `open_tab` rather than
-/// passing `url` on the browser's own command line: a command-line
-/// URL lands in *whatever tab the browser decides is active*, which
-/// is unambiguous for a genuinely fresh process but not when several
+/// for the default-profile case (see below), or else spawning a
+/// browser window and waiting for its *already-installed* Relay
+/// Bridge extension to connect on its own — then explicitly asks it
+/// to open `url` in a fresh tab via `open_tab` rather than passing
+/// `url` on the browser's own command line: a command-line URL lands
+/// in *whatever tab the browser decides is active*, which is
+/// unambiguous for a genuinely fresh process but not when several
 /// `LaunchBrowser` steps end up sharing one reused connection — they'd
 /// otherwise race over which of them the URL actually opened for.
 /// Returns `"<connection>#<tabId>"` — later `Browser*` steps'
@@ -551,6 +604,20 @@ fn resolve_extension_dir() -> Result<std::path::PathBuf, AutomationError> {
 /// right tab within it, every time, without re-identifying anything —
 /// all the "which connection is this, really" work happens once,
 /// right here, not on every later step.
+///
+/// This used to also pre-load the extension into a freshly spawned
+/// process via `--load-extension`, so a completely cold-started
+/// browser could bootstrap itself with no manual step at all. Chrome
+/// 137 removed that flag from official builds entirely (abused too
+/// often by malware sideloading extensions this same way) with no
+/// direct replacement short of driving the browser over the DevTools
+/// protocol in pipe mode — real scope, deliberately not taken on
+/// here. The Relay Bridge extension now has to already be installed
+/// in whichever profile this spawns/reuses; once it is, Chrome
+/// activates it on every normal startup on its own (this crate's
+/// `background.js` connects from its own `onStartup` listener),
+/// same as any other installed extension — no flag needed for that
+/// part at all.
 pub fn launch_browser_instance(url: &str, browser: Option<&str>, profile_dir: Option<&str>) -> Result<String, AutomationError> {
     let target = resolve_browser(browser)?;
     let custom_profile = profile_dir.filter(|s| !s.trim().is_empty());
@@ -573,22 +640,23 @@ pub fn launch_browser_instance(url: &str, browser: Option<&str>, profile_dir: Op
         }
     }
 
-    let extension_dir = resolve_extension_dir()?;
     let mut args = vec!["--new-window".to_string()];
     // Set `profile_dir` explicitly to opt into an isolated, dedicated
     // profile instead of the real default one above. Omitting
     // `--user-data-dir` is what actually selects the default profile;
     // passing anything here, even the "real" default path, makes
     // Chrome treat it as a *separate* profile from the one already
-    // running.
+    // running. Note this only makes sense once the extension has
+    // already been loaded into that specific profile by hand at least
+    // once — a brand new, never-used profile directory has nothing
+    // installed in it yet, and nothing here can install it anymore.
     if let Some(custom) = custom_profile {
         std::fs::create_dir_all(custom).map_err(|e| AutomationError(format!("couldn't create browser profile directory: {e}")))?;
         args.push(format!("--user-data-dir={custom}"));
     }
-    args.push(format!("--load-extension={}", extension_dir.display()));
     args.push("--no-first-run".to_string());
 
-    let connection = browser_bridge::spawn_instance(&target.path, &args, std::time::Duration::from_secs(20)).map_err(AutomationError)?;
+    let connection = browser_bridge::spawn_instance(&target.path, &args, std::time::Duration::from_secs(20), &target.id).map_err(AutomationError)?;
     open_tab_in(&connection, url)
 }
 
@@ -612,7 +680,7 @@ pub fn open_url(url: &str) -> Result<(), AutomationError> {
     // The empty "" argument is `start`'s window-title placeholder —
     // without it, a URL containing characters like `&` can be
     // misparsed as the title instead of the target.
-    std::process::Command::new("cmd")
+    hidden_command("cmd")
         .args(["/C", "start", "", url])
         .spawn()
         .map(|_| ())
@@ -777,7 +845,7 @@ pub struct PingResult {
 }
 
 pub fn ping(host: &str, timeout_ms: u32) -> Result<PingResult, AutomationError> {
-    let output = std::process::Command::new("ping")
+    let output = hidden_command("ping")
         .args(["-n", "1", "-w", &timeout_ms.to_string(), host])
         .output()
         .map_err(|e| AutomationError(format!("failed to run ping: {e}")))?;
@@ -823,7 +891,7 @@ pub fn get_env_var(name: &str) -> Result<String, AutomationError> {
 /// enumerating processes via the Win32 API directly, since parsing
 /// its well-defined CSV output is simpler and just as reliable.
 pub fn check_process(name: &str) -> Result<bool, AutomationError> {
-    let output = std::process::Command::new("tasklist")
+    let output = hidden_command("tasklist")
         .args(["/FI", &format!("IMAGENAME eq {name}"), "/FO", "CSV", "/NH"])
         .output()
         .map_err(|e| AutomationError(format!("failed to run tasklist: {e}")))?;
@@ -841,7 +909,7 @@ pub fn kill_process(name: &str, force: bool) -> Result<(), AutomationError> {
     if force {
         args.push("/F".to_string());
     }
-    let output = std::process::Command::new("taskkill")
+    let output = hidden_command("taskkill")
         .args(&args)
         .output()
         .map_err(|e| AutomationError(format!("failed to run taskkill: {e}")))?;
@@ -966,45 +1034,94 @@ fn wide(s: &str) -> Vec<u16> {
 /// until the user dismisses it, which is exactly the "pause the flow
 /// until acknowledged" behavior a flow author wants.
 pub fn show_message(title: &str, message: &str) -> Result<(), AutomationError> {
-    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MB_SETFOREGROUND, MB_TOPMOST, MessageBoxW};
     let title_w = wide(title);
     let message_w = wide(message);
     unsafe {
-        MessageBoxW(None, PCWSTR::from_raw(message_w.as_ptr()), PCWSTR::from_raw(title_w.as_ptr()), MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(
+            None,
+            PCWSTR::from_raw(message_w.as_ptr()),
+            PCWSTR::from_raw(title_w.as_ptr()),
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND,
+        );
     }
     Ok(())
 }
 
 /// Shows a blocking Yes/No prompt, returning `true` for Yes.
 pub fn show_confirm(title: &str, message: &str) -> Result<bool, AutomationError> {
-    use windows::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_YESNO, MessageBoxW};
+    use windows::Win32::UI::WindowsAndMessaging::{IDYES, MB_ICONQUESTION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW};
     let title_w = wide(title);
     let message_w = wide(message);
     let result = unsafe {
-        MessageBoxW(None, PCWSTR::from_raw(message_w.as_ptr()), PCWSTR::from_raw(title_w.as_ptr()), MB_YESNO | MB_ICONQUESTION)
+        MessageBoxW(
+            None,
+            PCWSTR::from_raw(message_w.as_ptr()),
+            PCWSTR::from_raw(title_w.as_ptr()),
+            MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND,
+        )
     };
     Ok(result == IDYES)
 }
 
 /// Shows a blocking text-input prompt pre-filled with `default_value`.
 /// Win32 has no built-in input box, so this shells out to a hidden
-/// PowerShell process running .NET's `Microsoft.VisualBasic.Interaction.InputBox`
-/// — a real native dialog, just spawned rather than drawn directly.
-/// Returns `default_value` unchanged if the user cancels (VB's
-/// `InputBox` itself returns `""` on cancel, indistinguishable from an
-/// empty answer — matching `default_value` back out is the least
-/// surprising behavior for a flow author either way).
+/// PowerShell process running a small WinForms dialog — a real native
+/// dialog, just spawned rather than drawn directly. Built by hand
+/// (rather than the one-line `Microsoft.VisualBasic.Interaction.InputBox`)
+/// specifically so it can be marked `TopMost` and `Activate()`d — the
+/// VB helper has no way to control that, so it could get lost behind
+/// whatever window the flow's own automation had focused right
+/// before this step, indistinguishable from the flow having silently
+/// stalled. Returns `default_value` unchanged if the user cancels.
 pub fn show_input(title: &str, message: &str, default_value: &str) -> Result<String, AutomationError> {
     fn escape_ps_single_quoted(s: &str) -> String {
         s.replace('\'', "''")
     }
     let script = format!(
-        "Add-Type -AssemblyName Microsoft.VisualBasic; [Console]::Out.Write([Microsoft.VisualBasic.Interaction]::InputBox('{}', '{}', '{}'))",
-        escape_ps_single_quoted(message),
-        escape_ps_single_quoted(title),
-        escape_ps_single_quoted(default_value),
+        r#"Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$form = New-Object System.Windows.Forms.Form
+$form.Text = '{title}'
+$form.Width = 420
+$form.Height = 160
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$label = New-Object System.Windows.Forms.Label
+$label.Text = '{message}'
+$label.SetBounds(12, 12, 380, 40)
+$form.Controls.Add($label)
+$textbox = New-Object System.Windows.Forms.TextBox
+$textbox.SetBounds(12, 55, 380, 22)
+$textbox.Text = '{default_value}'
+$form.Controls.Add($textbox)
+$okButton = New-Object System.Windows.Forms.Button
+$okButton.Text = 'OK'
+$okButton.SetBounds(230, 90, 75, 25)
+$okButton.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.Controls.Add($okButton)
+$form.AcceptButton = $okButton
+$cancelButton = New-Object System.Windows.Forms.Button
+$cancelButton.Text = 'Cancel'
+$cancelButton.SetBounds(315, 90, 75, 25)
+$cancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$form.Controls.Add($cancelButton)
+$form.CancelButton = $cancelButton
+$form.Add_Shown({{ $form.Activate(); $textbox.Focus(); $textbox.SelectAll() }})
+$result = $form.ShowDialog()
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
+  [Console]::Out.Write($textbox.Text)
+}} else {{
+  [Console]::Out.Write('{default_value}')
+}}"#,
+        title = escape_ps_single_quoted(title),
+        message = escape_ps_single_quoted(message),
+        default_value = escape_ps_single_quoted(default_value),
     );
-    let output = std::process::Command::new("powershell")
+    let output = hidden_command("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .output()
         .map_err(|e| AutomationError(format!("failed to show the input prompt: {e}")))?;
@@ -1896,7 +2013,7 @@ fn hostname_string() -> String {
 /// field) — `cmd /c ver` needs neither and has worked unchanged since
 /// Windows XP.
 fn os_version_string() -> String {
-    std::process::Command::new("cmd")
+    hidden_command("cmd")
         .args(["/C", "ver"])
         .output()
         .ok()

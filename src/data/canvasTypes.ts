@@ -71,6 +71,11 @@ export interface TerminalNodeData extends Record<string, unknown> {
    *  Rendered as a small indicator (full text on hover); edited via
    *  the Inspector, not on the canvas itself. */
   comment?: string;
+  /** True when a field this step needs to run is still empty — see
+   *  `flowModel.ts`'s `nodeIsIncomplete`. Rendered as a warning badge
+   *  so an unfinished node is visible before the user ever presses
+   *  run, not just once it fails mid-flow. */
+  incomplete?: boolean;
 }
 
 export interface RelayEdge extends Edge {

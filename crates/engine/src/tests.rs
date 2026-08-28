@@ -209,6 +209,9 @@ impl AutomationBackend for MockBackend {
     fn show_message(&self, _title: &str, _message: &str) -> Result<(), String> {
         Ok(())
     }
+    fn show_message_async(&self, _title: &str, _message: &str) -> Result<(), String> {
+        Ok(())
+    }
     fn show_confirm(&self, _title: &str, _message: &str) -> Result<bool, String> {
         Ok(true)
     }
@@ -1451,6 +1454,71 @@ fn calculate_dividing_by_zero_fails_the_step_instead_of_producing_inf() {
         steps: vec![Step {
             id: "calc".into(),
             action: Action::Calculate { a: "1".into(), op: CalcOp::Divide, b: "0".into(), variable: "r".into() },
+            retry: RetryPolicy::default(),
+            enabled: true,
+            breakpoint: false,
+        }],
+        connections: vec![],
+        entry: Some("calc".into()),
+        step_delay_ms: 0,
+    };
+    let mut observer = NullObserver;
+    let result = run_flow_with_backend(&flow, &mut observer, &MockBackend::always_succeeds(), false);
+    assert!(result.is_err());
+}
+
+#[test]
+fn calculate_rounds_to_the_requested_decimal_places() {
+    for (op, expect) in [(CalcOp::Round, "3.14"), (CalcOp::Floor, "3.14"), (CalcOp::Ceil, "3.15")] {
+        let flow = Flow {
+            name: "test".into(),
+            steps: vec![Step {
+                id: "calc".into(),
+                action: Action::Calculate {
+                    a: "3.14159".into(),
+                    op,
+                    b: "2".into(),
+                    variable: "r".into(),
+                },
+                retry: RetryPolicy::default(),
+                enabled: true,
+                breakpoint: false,
+            }],
+            connections: vec![],
+            entry: Some("calc".into()),
+            step_delay_ms: 0,
+        };
+        let mut observer = NullObserver;
+        let backend = MockBackend::always_succeeds();
+        let mut ctx = ExecutionContext {
+            initial_monitor_signature: backend.monitor_signature(),
+            ..Default::default()
+        };
+        run_branch(
+            &flow.steps,
+            &flow.connections,
+            flow.entry.as_deref(),
+            &mut ctx,
+            &mut observer,
+            &backend,
+        )
+        .unwrap();
+        assert_eq!(ctx.variables.get("r").map(String::as_str), Some(expect));
+    }
+}
+
+#[test]
+fn calculate_rounding_with_negative_decimal_places_fails_the_step() {
+    let flow = Flow {
+        name: "test".into(),
+        steps: vec![Step {
+            id: "calc".into(),
+            action: Action::Calculate {
+                a: "3.14".into(),
+                op: CalcOp::Round,
+                b: "-1".into(),
+                variable: "r".into(),
+            },
             retry: RetryPolicy::default(),
             enabled: true,
             breakpoint: false,

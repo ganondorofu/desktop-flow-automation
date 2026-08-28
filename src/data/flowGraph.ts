@@ -127,7 +127,7 @@ export function makeLeaf(kind: LeafKind): FlowNode {
     case "write_clipboard":
       return { id, kind, text: "", enabled: true };
     case "show_message":
-      return { id, kind, title: "Relay", message: "", enabled: true };
+      return { id, kind, title: "Relay", message: "", blocking: true, enabled: true };
     case "show_confirm":
       return { id, kind, title: "Relay", message: "", variable: "confirm_result", enabled: true };
     case "show_input":
@@ -320,16 +320,18 @@ export function collectVariableNames(branch: Branch, acc: Set<string> = new Set(
   for (const n of branch.steps) {
     if (n.kind === "set_variable") acc.add(n.name);
     else if (VARIABLE_OUTPUT_KINDS.has(n.kind) && "variable" in n) {
-      acc.add(n.variable);
-      if (n.kind === "http") acc.add(n.statusVariable);
-      if (n.kind === "http_download") acc.add(n.pathVariable);
+      if (n.variable) acc.add(n.variable);
+      if (n.kind === "http" && n.statusVariable) acc.add(n.statusVariable);
+      if (n.kind === "http_download" && n.pathVariable) acc.add(n.pathVariable);
     } else if (n.kind === "get_system_info") {
       for (const name of [n.hostname, n.osVersion, n.cpuPercent, n.memoryPercent, n.ipAddress]) {
         if (name) acc.add(name);
       }
     } else if (n.kind === "ping") {
-      acc.add(n.variable);
-      acc.add(`${n.variable}_latency_ms`);
+      if (n.variable) {
+        acc.add(n.variable);
+        acc.add(`${n.variable}_latency_ms`);
+      }
     } else if (n.kind === "find_image") {
       acc.add("last_match_x");
       acc.add("last_match_y");
@@ -358,6 +360,35 @@ export function collectFunctionNames(branch: Branch, acc: Set<string> = new Set(
   return Array.from(acc);
 }
 
+/** Step kinds that can affect the machine outside the flow itself —
+ *  running another program, deleting/overwriting a file, ending a
+ *  process, downloading and saving arbitrary content, shutting down/
+ *  restarting, or reading an environment variable that might hold a
+ *  secret. Not "unsafe to automate" (that's the whole point of this
+ *  app) — just worth a one-time heads-up when opening a `.relay` file
+ *  from somewhere other than this app's own Save, the same way a
+ *  downloaded script or macro warrants a first look before running.
+ *  Deliberately not `write_file` with `append: true` — appending to a
+ *  file the flow's own note-taking already knows about doesn't carry
+ *  the same "could clobber something" risk delete/overwrite does. */
+export function dangerousActionKinds(branch: Branch, acc: Set<FlowNode["kind"]> = new Set()): FlowNode["kind"][] {
+  for (const n of branch.steps) {
+    if (
+      n.kind === "launch_app" ||
+      n.kind === "delete_file" ||
+      n.kind === "kill_process" ||
+      n.kind === "power_action" ||
+      n.kind === "http_download" ||
+      n.kind === "get_env_var" ||
+      (n.kind === "write_file" && !n.append)
+    ) {
+      acc.add(n.kind);
+    }
+    for (const child of childBranches(n)) dangerousActionKinds(child, acc);
+  }
+  return Array.from(acc);
+}
+
 /** True if some *other* `function_def` node in the graph already
  *  claims `name` — two functions sharing a name would silently
  *  collide in `ctx.functions` (a plain map keyed by name) on the Rust
@@ -374,6 +405,32 @@ export function isDuplicateFunctionName(branch: Branch, nodeId: string, name: st
     return false;
   }
   return walk(branch);
+}
+
+/** The id of every `function_def` node whose name collides with
+ *  another one, anywhere in the graph — the canvas-wide counterpart
+ *  of `isDuplicateFunctionName` (which only answers for one node at a
+ *  time). Used to flag every colliding node with the same visible
+ *  warning badge `nodeIsIncomplete` uses, instead of leaving the
+ *  collision discoverable only by opening each node's Inspector. */
+export function duplicateFunctionDefIds(branch: Branch): Set<string> {
+  const byName = new Map<string, string[]>();
+  function walk(b: Branch) {
+    for (const n of b.steps) {
+      if (n.kind === "function_def" && n.name) {
+        const ids = byName.get(n.name) ?? [];
+        ids.push(n.id);
+        byName.set(n.name, ids);
+      }
+      for (const child of childBranches(n)) walk(child);
+    }
+  }
+  walk(branch);
+  const duplicates = new Set<string>();
+  for (const ids of byName.values()) {
+    if (ids.length > 1) for (const id of ids) duplicates.add(id);
+  }
+  return duplicates;
 }
 
 /** Every id in the graph, including steps nested inside a loop body

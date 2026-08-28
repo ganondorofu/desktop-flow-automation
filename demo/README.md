@@ -16,7 +16,7 @@
 
 ## 手順
 
-1. Chromeに `browser-extension/` を読み込み（デベロッパーモード→パッケージ化されていない拡張機能を読み込む）。
+1. Chromeに `relay-bridge-extension/` を読み込み（デベロッパーモード→パッケージ化されていない拡張機能を読み込む）。
 2. Relayを起動し、`demo/flow/price-and-order-demo.relay` を開いて実行。
 
 ### ローカルで試す場合

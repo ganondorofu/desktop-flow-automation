@@ -17,12 +17,43 @@ const SIDE_TO_POSITION: Record<HandleSide, Position> = {
   bottom: Position.Bottom,
 };
 
+/** Renders `%name%` references inside a node's body preview as small
+ *  chips instead of raw percent-sign text — the read-only canvas
+ *  counterpart of the Inspector's `contentEditable` chip editor (see
+ *  `variableChip.ts`), so a variable reference reads as one visual
+ *  unit in both places instead of looking like plain text here and a
+ *  chip there. Mirrors the engine's own `%...%` token rule (non-empty,
+ *  no whitespace/second `%` before the close) so a chip only ever
+ *  appears where the run would actually substitute one. */
+const VARIABLE_TOKEN = /%([^%\s]+)%/g;
+
+function renderBodyWithChips(body: string) {
+  const parts: (string | { name: string; key: number })[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  for (const match of body.matchAll(VARIABLE_TOKEN)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) parts.push(body.slice(lastIndex, index));
+    parts.push({ name: match[1], key: key++ });
+    lastIndex = index + match[0].length;
+  }
+  if (lastIndex < body.length) parts.push(body.slice(lastIndex));
+  return parts.map((part) =>
+    typeof part === "string" ? part : (
+      <span className="term-node-var-chip" key={part.key}>
+        {part.name}
+      </span>
+    ),
+  );
+}
+
 export function TerminalNode({ id, data, selected }: NodeProps<Node<TerminalNodeData>>) {
   const { t } = useTranslation();
   const classes = ["term-node"];
   if (selected) classes.push("selected");
   if (!data.enabled) classes.push("muted");
   if (data.status === "paused") classes.push("paused");
+  if (data.incomplete && data.enabled) classes.push("incomplete");
 
   const KindIcon = KIND_ICON[data.kind];
   const branchHandles = data.branchHandles ?? [];
@@ -89,12 +120,19 @@ export function TerminalNode({ id, data, selected }: NodeProps<Node<TerminalNode
           <div className="term-node-title" title={data.title}>{data.title}</div>
         </div>
       </div>
-      <div className="term-node-body" title={data.body}>{data.body}</div>
+      <div className="term-node-body" title={data.body}>{renderBodyWithChips(data.body)}</div>
 
       {data.comment && (
         <span className="term-node-comment" title={data.comment}>
           <span className="sr-only">{data.comment}</span>
           <MessageSquare size={11} strokeWidth={2} aria-hidden="true" />
+        </span>
+      )}
+
+      {data.incomplete && data.enabled && (
+        <span className="term-node-incomplete" title={t("canvas.incompleteStep")}>
+          <span className="sr-only">{t("canvas.incompleteStep")}</span>
+          <AlertTriangle size={11} strokeWidth={2.25} aria-hidden="true" />
         </span>
       )}
 

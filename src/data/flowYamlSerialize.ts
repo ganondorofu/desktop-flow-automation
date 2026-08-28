@@ -182,7 +182,13 @@ function nodeActionYamlLines(node: FlowNode, indent: string, head: string): stri
     case "write_clipboard":
       return [head, `${indent}  type: write_clipboard`, `${indent}  text: ${yamlString(node.text)}`];
     case "show_message":
-      return [head, `${indent}  type: show_message`, `${indent}  title: ${yamlString(node.title)}`, `${indent}  message: ${yamlString(node.message)}`];
+      return [
+        head,
+        `${indent}  type: show_message`,
+        `${indent}  title: ${yamlString(node.title)}`,
+        `${indent}  message: ${yamlString(node.message)}`,
+        ...(node.blocking ? [] : [`${indent}  blocking: false`]),
+      ];
     case "show_confirm":
       return [
         head,

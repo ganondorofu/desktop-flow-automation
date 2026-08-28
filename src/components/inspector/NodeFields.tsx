@@ -3,6 +3,7 @@ import { KEY_NAMES, type DateTimeFormat, type FlowNode, type TextOp } from "../.
 import { RecordPositionButton, PickUiElementButton } from "./pickers";
 import { VariableTextArea } from "./VariableTextArea";
 import { VariableTextInput } from "./VariableTextInput";
+import { VariablePicker } from "./VariablePicker";
 import { BrowserSelectorFields } from "./BrowserSelectorFields";
 import { ImageSourceFields } from "./ImageSourceFields";
 import { PathField } from "./PathField";
@@ -158,10 +159,17 @@ export function NodeFields({
               <option value="subtract">{t("inspector.fields.opSubtract")}</option>
               <option value="multiply">{t("inspector.fields.opMultiply")}</option>
               <option value="divide">{t("inspector.fields.opDivide")}</option>
+              <option value="round">{t("inspector.fields.opRound")}</option>
+              <option value="floor">{t("inspector.fields.opFloor")}</option>
+              <option value="ceil">{t("inspector.fields.opCeil")}</option>
             </select>
           </div>
           <div className="field">
-            <label>{t("inspector.fields.operandB")}</label>
+            <label>
+              {node.op === "round" || node.op === "floor" || node.op === "ceil"
+                ? t("inspector.fields.decimalPlaces")
+                : t("inspector.fields.operandB")}
+            </label>
             <input
               className="num-input"
               value={node.b}
@@ -605,7 +613,14 @@ export function NodeFields({
               />
             </div>
           )}
-          <p className="insp-hint">{t("inspector.fields.showMessageHint")}</p>
+          <div className="field-row">
+            <Toggle
+              checked={node.blocking}
+              onChange={(blocking) => onChange((n) => (n.kind === "show_message" ? { ...n, blocking } : n))}
+              label={t("inspector.fields.showMessageBlocking")}
+            />
+          </div>
+          <p className="insp-hint">{node.blocking ? t("inspector.fields.showMessageHint") : t("inspector.fields.showMessageNonBlockingHint")}</p>
         </>
       );
     case "show_confirm":
@@ -931,13 +946,19 @@ export function NodeFields({
                 items={[
                   {
                     label: t("inspector.fields.httpResponseBody"),
-                    name: node.variable,
+                    name: node.variable || "http_response",
+                    enabled: node.variable !== "",
                     onChange: (variable) => onChange((n) => (n.kind === "http" ? { ...n, variable } : n)),
+                    onToggleEnabled: (enabled) =>
+                      onChange((n) => (n.kind === "http" ? { ...n, variable: enabled ? node.variable || "http_response" : "" } : n)),
                   },
                   {
                     label: t("inspector.fields.httpStatusCode"),
-                    name: node.statusVariable,
+                    name: node.statusVariable || "http_status",
+                    enabled: node.statusVariable !== "",
                     onChange: (statusVariable) => onChange((n) => (n.kind === "http" ? { ...n, statusVariable } : n)),
+                    onToggleEnabled: (enabled) =>
+                      onChange((n) => (n.kind === "http" ? { ...n, statusVariable: enabled ? node.statusVariable || "http_status" : "" } : n)),
                   },
                 ]}
               />
@@ -977,13 +998,21 @@ export function NodeFields({
               items={[
                 {
                   label: t("inspector.fields.httpDownloadPath"),
-                  name: node.pathVariable,
+                  name: node.pathVariable || "saved_path",
+                  enabled: node.pathVariable !== "",
                   onChange: (pathVariable) => onChange((n) => (n.kind === "http_download" ? { ...n, pathVariable } : n)),
+                  onToggleEnabled: (enabled) =>
+                    onChange((n) =>
+                      n.kind === "http_download" ? { ...n, pathVariable: enabled ? node.pathVariable || "saved_path" : "" } : n,
+                    ),
                 },
                 {
                   label: t("inspector.fields.httpStatusCode"),
-                  name: node.variable,
+                  name: node.variable || "status_code",
+                  enabled: node.variable !== "",
                   onChange: (variable) => onChange((n) => (n.kind === "http_download" ? { ...n, variable } : n)),
+                  onToggleEnabled: (enabled) =>
+                    onChange((n) => (n.kind === "http_download" ? { ...n, variable: enabled ? node.variable || "status_code" : "" } : n)),
                 },
               ]}
             />
@@ -1023,10 +1052,13 @@ export function NodeFields({
               items={[
                 {
                   label: t("inspector.fields.pingReachable"),
-                  name: node.variable,
+                  name: node.variable || "ping_reachable",
+                  enabled: node.variable !== "",
                   onChange: (variable) => onChange((n) => (n.kind === "ping" ? { ...n, variable } : n)),
+                  onToggleEnabled: (enabled) =>
+                    onChange((n) => (n.kind === "ping" ? { ...n, variable: enabled ? node.variable || "ping_reachable" : "" } : n)),
                 },
-                { label: t("inspector.fields.pingLatencyMs"), name: `${node.variable || "?"}_latency_ms` },
+                ...(node.variable ? [{ label: t("inspector.fields.pingLatencyMs"), name: `${node.variable}_latency_ms` }] : []),
               ]}
             />
           </div>
@@ -1106,14 +1138,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_screenshot" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_screenshot" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1344,8 +1373,11 @@ export function NodeFields({
                 items={[
                   {
                     label: t("inspector.fields.browserTabInstance"),
-                    name: node.variable,
+                    name: node.variable || "browser_tab",
+                    enabled: node.variable !== "",
                     onChange: (variable) => onChange((n) => (n.kind === "launch_browser" ? { ...n, variable } : n)),
+                    onToggleEnabled: (enabled) =>
+                      onChange((n) => (n.kind === "launch_browser" ? { ...n, variable: enabled ? node.variable || "browser_tab" : "" } : n)),
                   },
                 ]}
               />
@@ -1368,14 +1400,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_navigate" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_navigate" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1391,14 +1420,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_click" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_click" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1426,14 +1452,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_get_text" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_get_text" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1459,14 +1482,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_set_value" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_set_value" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1482,14 +1502,11 @@ export function NodeFields({
           {detailed && (
             <div className="field">
               <label>{t("inspector.fields.browserInstance")}</label>
-              <input
-                className="num-input"
+              <VariablePicker
                 value={node.instance}
-                placeholder="%browser_tab%"
-                onChange={(e) => {
-                  const instance = e.target.value;
-                  onChange((n) => (n.kind === "browser_wait_for_selector" ? { ...n, instance } : n));
-                }}
+                wrap
+                options={variableNames}
+                onChangeValue={(instance) => onChange((n) => (n.kind === "browser_wait_for_selector" ? { ...n, instance } : n))}
               />
             </div>
           )}
@@ -1500,13 +1517,10 @@ export function NodeFields({
         <>
           <div className="field">
             <label>{t("inspector.fields.name")}</label>
-            <input
-              className="num-input"
+            <VariablePicker
               value={node.condition.variable}
-              onChange={(e) => {
-                const variable = e.target.value;
-                onChange((n) => (n.kind === "if" ? { ...n, condition: { ...n.condition, variable } } : n));
-              }}
+              options={variableNames}
+              onChangeValue={(variable) => onChange((n) => (n.kind === "if" ? { ...n, condition: { ...n.condition, variable } } : n))}
             />
           </div>
           {detailed && (

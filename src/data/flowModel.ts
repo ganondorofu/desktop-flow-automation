@@ -97,10 +97,18 @@ export function formatKeyCombo(key: string, modifiers: KeyModifiers): string {
   return parts.join("+");
 }
 
-/** The four basic arithmetic operations — mirrors `flow_schema::CalcOp`. */
-export type CalcOp = "add" | "subtract" | "multiply" | "divide";
+/** Arithmetic and rounding operations — mirrors `flow_schema::CalcOp`. */
+export type CalcOp = "add" | "subtract" | "multiply" | "divide" | "round" | "floor" | "ceil";
 
-const CALC_OP_SYMBOL: Record<CalcOp, string> = { add: "+", subtract: "−", multiply: "×", divide: "÷" };
+const CALC_OP_SYMBOL: Record<CalcOp, string> = {
+  add: "+",
+  subtract: "−",
+  multiply: "×",
+  divide: "÷",
+  round: "≈",
+  floor: "⌊⌋",
+  ceil: "⌈⌉",
+};
 
 /** How a `Browser*` step finds its element — mirrors
  *  `flow_schema::BrowserSelector`/`BrowserSelectorSpec`. `css` is the
@@ -237,7 +245,11 @@ export type FlowNode = (
   | { id: string; kind: "lock_workstation"; enabled: boolean }
   | { id: string; kind: "read_clipboard"; variable: string; enabled: boolean }
   | { id: string; kind: "write_clipboard"; text: string; enabled: boolean }
-  | { id: string; kind: "show_message"; title: string; message: string; enabled: boolean }
+  /** `blocking` mirrors `flow_schema::Action::ShowMessage`'s field of
+   *  the same name: whether the flow waits for the user to dismiss
+   *  the box before continuing, or moves on immediately, leaving it
+   *  open. */
+  | { id: string; kind: "show_message"; title: string; message: string; blocking: boolean; enabled: boolean }
   /** `variable` receives `"yes"`/`"no"` — mirrors
    *  `flow_schema::Action::ShowConfirm`. */
   | { id: string; kind: "show_confirm"; title: string; message: string; variable: string; enabled: boolean }
@@ -518,6 +530,192 @@ export function paletteLabel(t: (key: string, opts?: Record<string, unknown>) =>
   if (mode === "beginner") return t(`palette.items.${key}`);
   const normal = t(`palette.itemsNormal.${key}`);
   return normal === `palette.itemsNormal.${key}` ? t(`palette.items.${key}`) : normal;
+}
+
+function isBlank(value: string | undefined): boolean {
+  return !value || value.trim() === "";
+}
+
+function selectorIsBlank(selector: BrowserSelectorField): boolean {
+  return selector.kind === "attribute"
+    ? isBlank(selector.name) || isBlank(selector.value)
+    : isBlank(selector.value);
+}
+
+function imageSourceIsBlank(image: ImageSourceField): boolean {
+  return image.kind === "embedded" ? isBlank(image.data) : isBlank(image.value);
+}
+
+/** A sentinel key (not a real `inspector.fields.*` key) for the
+ *  `get_element_text` case, where either `elementName` or
+ *  `automationId` alone satisfies the requirement — rendered as a
+ *  combined "one of these two" hint instead of naming a single field.
+ *  See `MISSING_FIELD_LABEL_KEYS`' doc comment in Inspector.tsx. */
+export const MISSING_ELEMENT_SELECTOR = "__elementSelector";
+/** Same idea for `get_system_info`, where at least one of its five
+ *  independently-optional fields must be set. */
+export const MISSING_SYSTEM_INFO_FIELD = "__systemInfoField";
+
+/** The `inspector.fields.*` key(s) for every field this node needs to
+ *  actually run but currently has empty — an empty required text/
+ *  variable/selector/path, not just an unusual default value. Empty
+ *  means the canvas warning badge (`nodeIsIncomplete`); non-empty also
+ *  drives the Inspector's own summary of *which* fields to fix,
+ *  instead of a bare "something's wrong" badge with no further clue.
+ *  Intentionally conservative: fields where an empty value is a
+ *  legitimate choice (a message body, a value to assign, free-text
+ *  content) are never included. */
+export function nodeMissingFieldKeys(node: FlowNode): string[] {
+  const missing: string[] = [];
+  const need = (blank: boolean, key: string) => {
+    if (blank) missing.push(key);
+  };
+  switch (node.kind) {
+    case "set_variable":
+      need(isBlank(node.name), "name");
+      break;
+    case "calculate":
+      need(isBlank(node.a), "operandA");
+      need(isBlank(node.b), "operandB");
+      need(isBlank(node.variable), "calcResult");
+      break;
+    case "key_press":
+      need(isBlank(node.key), "key");
+      break;
+    case "find_image":
+      need(imageSourceIsBlank(node.image), "image");
+      break;
+    case "find_text_ocr":
+      need(isBlank(node.text), "text");
+      break;
+    case "wait_for_window":
+    case "focus_window":
+      need(isBlank(node.windowTitle), "windowTitle");
+      break;
+    case "launch_app":
+      need(isBlank(node.path), "appPath");
+      break;
+    case "open_url":
+    case "browser_navigate":
+      need(isBlank(node.url), "url");
+      break;
+    case "notify":
+    case "show_message":
+      need(isBlank(node.title), "title");
+      break;
+    case "read_file":
+      need(isBlank(node.path), "path");
+      need(isBlank(node.variable), "fileContents");
+      break;
+    case "list_directory":
+      need(isBlank(node.path), "path");
+      need(isBlank(node.variable), "folderListing");
+      break;
+    case "write_file":
+    case "delete_file":
+    case "create_directory":
+    case "wait_for_file":
+    case "screenshot":
+    case "browser_screenshot":
+      need(isBlank(node.path), "path");
+      break;
+    case "copy_file":
+    case "move_file":
+      need(isBlank(node.source), "source");
+      need(isBlank(node.destination), "destination");
+      break;
+    case "read_clipboard":
+      need(isBlank(node.variable), "clipboardText");
+      break;
+    case "show_confirm":
+      need(isBlank(node.title), "title");
+      need(isBlank(node.variable), "confirmResult");
+      break;
+    case "show_input":
+      need(isBlank(node.title), "title");
+      need(isBlank(node.variable), "inputResult");
+      break;
+    case "get_date_time":
+      need(isBlank(node.variable), "name");
+      break;
+    case "get_system_info":
+      need(
+        isBlank(node.hostname) &&
+          isBlank(node.osVersion) &&
+          isBlank(node.cpuPercent) &&
+          isBlank(node.memoryPercent) &&
+          isBlank(node.ipAddress),
+        MISSING_SYSTEM_INFO_FIELD,
+      );
+      break;
+    case "text_transform":
+      need(isBlank(node.text), "text");
+      need(isBlank(node.variable), "name");
+      break;
+    case "http":
+      need(isBlank(node.url), "url");
+      break;
+    case "http_download":
+      need(isBlank(node.url), "url");
+      need(isBlank(node.path), "path");
+      break;
+    case "ping":
+      need(isBlank(node.host), "host");
+      break;
+    case "dns_lookup":
+      need(isBlank(node.hostname), "hostname");
+      need(isBlank(node.variable), "name");
+      break;
+    case "get_env_var":
+      need(isBlank(node.name), "name");
+      need(isBlank(node.variable), "name");
+      break;
+    case "check_process":
+      need(isBlank(node.name), "name");
+      need(isBlank(node.variable), "name");
+      break;
+    case "kill_process":
+      need(isBlank(node.name), "name");
+      break;
+    case "generate_random":
+      need(isBlank(node.min), "randomMin");
+      need(isBlank(node.max), "randomMax");
+      need(isBlank(node.variable), "name");
+      break;
+    case "get_element_text":
+      need(isBlank(node.variable), "elementText");
+      need(isBlank(node.elementName) && isBlank(node.automationId), MISSING_ELEMENT_SELECTOR);
+      break;
+    case "browser_click":
+    case "browser_wait_for_selector":
+      need(selectorIsBlank(node.selector), "selector");
+      break;
+    case "browser_get_text":
+      need(selectorIsBlank(node.selector), "selector");
+      need(isBlank(node.variable), "name");
+      break;
+    case "browser_set_value":
+      need(selectorIsBlank(node.selector), "selector");
+      break;
+    case "if":
+      need(isBlank(node.condition.variable), "name");
+      break;
+    case "function_def":
+      need(isBlank(node.name), "functionName");
+      break;
+    case "call_function":
+      need(isBlank(node.name), "callFunctionName");
+      break;
+  }
+  return missing;
+}
+
+/** Whether this node is missing a field it needs to actually run —
+ *  see `nodeMissingFieldKeys`. Used to flag a placed-but-unfinished
+ *  node on the canvas before the user ever presses run, the same way
+ *  a form highlights an empty required input. */
+export function nodeIsIncomplete(node: FlowNode): boolean {
+  return nodeMissingFieldKeys(node).length > 0;
 }
 
 /** Builds the canvas node's title/sub/body for a live node, localized via `t`. */

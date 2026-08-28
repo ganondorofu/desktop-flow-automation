@@ -1,0 +1,12 @@
+[package]
+name = "native-host"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "relay-native-host"
+path = "src/main.rs"
+
+[dependencies]
+browser-bridge = { path = "../browser-bridge" }
+tokio = { version = "1", features = ["rt", "net", "io-util", "io-std", "time", "macros"] }

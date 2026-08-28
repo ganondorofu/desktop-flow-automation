@@ -53,13 +53,13 @@ pub enum Action {
         name: String,
         value: String,
     },
-    /// The four basic arithmetic operations on two operands (each
-    /// resolved through `%variable%` substitution first, then parsed
-    /// as a number), storing the result into `variable` — e.g. a
-    /// running total, or turning `%price%` and `%quantity%` into a
-    /// subtotal. Division by zero fails the step rather than producing
-    /// `inf`/`NaN`, since a silently-broken number is worse than a
-    /// visible failure.
+    /// Arithmetic and rounding on two operands (each resolved through
+    /// `%variable%` substitution first, then parsed as a number),
+    /// storing the result into `variable` — e.g. a running total,
+    /// turning `%price%` and `%quantity%` into a subtotal, or rounding
+    /// `%price%` to 2 decimal places. Division by zero fails the step
+    /// rather than producing `inf`/`NaN`, since a silently-broken
+    /// number is worse than a visible failure.
     Calculate {
         a: String,
         op: CalcOp,
@@ -375,11 +375,18 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         instance: Option<String>,
     },
-    /// Shows a blocking message box with an OK button — pauses the
-    /// flow until the user dismisses it.
+    /// Shows a message box with an OK button. `blocking` (default
+    /// `true`, omitted from YAML at that default so ordinary flows
+    /// stay uncluttered) controls whether the flow pauses until the
+    /// user dismisses it or continues to the next step immediately,
+    /// leaving the box open — the latter for a status note the user
+    /// should see eventually but that shouldn't hold up the rest of
+    /// the run.
     ShowMessage {
         title: String,
         message: String,
+        #[serde(default = "default_true", skip_serializing_if = "is_true_bool")]
+        blocking: bool,
     },
     /// Shows a blocking Yes/No prompt, storing `"yes"`/`"no"` into
     /// `variable` once the user picks one — combine with `If` to
@@ -536,6 +543,14 @@ pub enum Action {
     },
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true_bool(value: &bool) -> bool {
+    *value
+}
+
 fn default_ping_timeout_ms() -> u32 {
     2000
 }
@@ -567,6 +582,13 @@ pub enum CalcOp {
     Subtract,
     Multiply,
     Divide,
+    /// Rounds `a` to `b` decimal places (`b: "0"` for the nearest
+    /// whole number) — half-away-from-zero, same as `f64::round`.
+    Round,
+    /// Rounds `a` down to `b` decimal places.
+    Floor,
+    /// Rounds `a` up to `b` decimal places.
+    Ceil,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]

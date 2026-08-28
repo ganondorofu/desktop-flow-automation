@@ -1,15 +1,21 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 */
 @import url("https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap");
 
 :root {
-  --bg: #e7e9e3;
-  --surface: #f5f6f1;
-  --surface-2: #edeee7;
-  --surface-3: #e0e2d9;
-  --border: #c7cbbe;
-  --border-strong: #aeb3a3;
-  --text: #1b1d18;
-  --text-muted: #61665a;
-  --text-faint: #8b9081;
+  --font-ui: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+  --font-mono: "IBM Plex Mono", "Cascadia Mono", Consolas, monospace;
+
+  --bg: #e9ece8;
+  --surface: #f8f9f6;
+  --surface-2: #f0f2ed;
+  --surface-3: #e3e6df;
+  --border: #cbd0c6;
+  --border-strong: #aeb5a8;
+  --text: #191c18;
+  --text-muted: #555d53;
+  --text-faint: #747d71;
+  --text-faintest: #949b91;
 
   --copper: #a85f2c;
   --copper-strong: #8f4e22;
@@ -17,7 +23,18 @@
   --copper-wash: #ebd9c4;
 
   --teal: #3b726c;
+  --teal-strong: #2f625d;
+  --teal-spin: #4f8f88;
   --teal-wash: #d9e5e1;
+  --teal-tint: rgba(59, 114, 108, 0.12);
+  --copper-tint: rgba(168, 95, 44, 0.1);
+
+  /* Light text sitting on a filled --copper/--teal button background
+     — always near-white regardless of theme (the button fill itself
+     is what changes between light/dark, not this), so these live
+     outside the light/dark split below. */
+  --on-copper: #fffbf6;
+  --on-teal: #f3faf8;
 
   --success: #3f7a4c;
   --success-wash: #dceadf;
@@ -27,6 +44,13 @@
   --danger-wash: #f1d9d1;
 
   --canvas-dot: #c4c8b9;
+  --scrim: rgba(10, 11, 13, 0.58);
+  --scrim-strong: rgba(10, 11, 13, 0.92);
+  --shadow-control: 0 1px 2px rgba(24, 28, 23, 0.14);
+  --shadow-node: 0 2px 7px rgba(24, 28, 23, 0.1);
+  --shadow-floating: 0 14px 36px rgba(18, 21, 18, 0.24);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--teal);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,8 +80,15 @@
 
     --danger: #e17b65;
     --danger-wash: #3b231e;
+    --warning: #d9a53a;
+    --warning-wash: #3a2f1a;
 
     --canvas-dot: #2c2d31;
+    --scrim: rgba(0, 0, 0, 0.62);
+    --scrim-strong: rgba(10, 11, 13, 0.94);
+    --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.32);
+    --shadow-node: 0 3px 10px rgba(0, 0, 0, 0.28);
+    --shadow-floating: 0 18px 44px rgba(0, 0, 0, 0.48);
   }
 }
 
@@ -72,10 +103,50 @@ body,
   margin: 0;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+::selection {
+  background: var(--teal-wash);
+  color: var(--text);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+  background-clip: padding-box;
 }

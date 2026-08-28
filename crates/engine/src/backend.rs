@@ -6,7 +6,7 @@ use flow_schema::{
 /// Splits a `LaunchBrowser`-captured instance string (`"<connection>#<tabId>"`,
 /// see `automation::launch_browser_instance`'s doc comment) back into
 /// the connection id `browser_bridge::send_command` routes to and the
-/// tab id its `params.tabId` should carry — `browser-extension`'s
+/// tab id its `params.tabId` should carry — `relay-bridge-extension`'s
 /// `resolveTabId` is what actually reads that back out on the other
 /// end. An instance string that doesn't contain `#` (or is absent) is
 /// treated as connection-only with no specific tab, so an older saved
@@ -59,6 +59,10 @@ pub trait AutomationBackend {
     fn read_clipboard(&self) -> Result<String, String>;
     fn write_clipboard(&self, text: &str) -> Result<(), String>;
     fn show_message(&self, title: &str, message: &str) -> Result<(), String>;
+    /// Same box as `show_message`, but returns as soon as it's shown
+    /// instead of waiting for the user to dismiss it — the box stays
+    /// open on its own thread. Used for `ShowMessage { blocking: false, .. }`.
+    fn show_message_async(&self, title: &str, message: &str) -> Result<(), String>;
     /// Returns `true` for Yes.
     fn show_confirm(&self, title: &str, message: &str) -> Result<bool, String>;
     fn show_input(&self, title: &str, message: &str, default_value: &str) -> Result<String, String>;
@@ -167,6 +171,14 @@ impl AutomationBackend for WindowsBackend {
     }
     fn show_message(&self, title: &str, message: &str) -> Result<(), String> {
         automation::show_message(title, message).map_err(|e| e.to_string())
+    }
+    fn show_message_async(&self, title: &str, message: &str) -> Result<(), String> {
+        let title = title.to_string();
+        let message = message.to_string();
+        std::thread::spawn(move || {
+            let _ = automation::show_message(&title, &message);
+        });
+        Ok(())
     }
     fn show_confirm(&self, title: &str, message: &str) -> Result<bool, String> {
         automation::show_confirm(title, message).map_err(|e| e.to_string())

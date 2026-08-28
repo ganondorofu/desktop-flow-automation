@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Relay Bridge",
+  "version": "0.1.0",
+  "description": "Connects the Relay desktop automation app to this browser so flows can navigate, click, read, and fill web pages in a tab you already have open.",
+  "permissions": ["scripting", "tabs", "alarms", "nativeMessaging"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAridxAmMToDWf0JIFaqBjpqxFX4gJKhYUk+K2t53RxIlIJYiBiUFWogqeKyysV3Bs3CMqX0zbQcX6JIMzn7+ocXJ7udDWCgYDds0nb2ml6V0+kNSaP9rir5KwoAfmFv62ZHQRAux05a/7Ng9ziiJeSjtb2gWLnz8U9hodBaxBSva77bh/s0js5MJdYeE+79/O8l6VPFB4LJujipA1kyPdcg/WRWxPK1CePr0l7mChi3Q/aLAH9rW+MkGmIwNKy0tHsHqNAFkQY36oKtYX74RHye49Kqn1hG2xWODwwMVZkd+uem8JvKd8XmCGYMx0lQ9FcvXymTauQg0i9polwiSAywIDAQAB"
+}

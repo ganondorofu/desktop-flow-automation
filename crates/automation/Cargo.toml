@@ -46,3 +46,4 @@ windows = { version = "0.58", features = [
     "Win32_System_SystemInformation",
 ] }
 uiautomation = "0.11"
+winreg = "0.52"

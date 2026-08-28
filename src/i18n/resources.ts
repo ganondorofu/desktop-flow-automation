@@ -83,6 +83,13 @@ export const resources = {
         notElevated: "Not elevated",
         notElevatedHint:
           "Relay isn't running as Administrator — clicks/keystrokes silently do nothing against a target app that is. Click to restart elevated.",
+        checkForUpdate: "Check for Updates…",
+        checkingForUpdate: "Checking for updates…",
+        upToDate: "You're on the latest version.",
+        updateAvailable:
+          "A new version ({{version}}) is available. Download and install now? Relay will restart.",
+        updateDownloading: "Downloading update…",
+        updateFailed: "Couldn't check for updates: {{message}}",
       },
       palette: {
         search: "Search actions",
@@ -556,6 +563,13 @@ export const resources = {
         notElevated: "管理者権限なし",
         notElevatedHint:
           "Relayは管理者権限で実行されていません。対象アプリが管理者権限で動いている場合、クリックやキー入力が何も起きないことがあります。クリックすると管理者権限で再起動します。",
+        checkForUpdate: "アップデートを確認…",
+        checkingForUpdate: "アップデートを確認中…",
+        upToDate: "最新バージョンです。",
+        updateAvailable:
+          "新しいバージョン（{{version}}）があります。今すぐダウンロードしてインストールしますか？Relayが再起動します。",
+        updateDownloading: "アップデートをダウンロード中…",
+        updateFailed: "アップデートの確認に失敗しました: {{message}}",
       },
       palette: {
         search: "アクションを検索",

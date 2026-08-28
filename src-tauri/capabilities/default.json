@@ -16,6 +16,8 @@
     "core:window:allow-outer-size",
     "core:window:allow-is-decorated",
     "core:window:allow-set-skip-taskbar",
-    "core:window:allow-destroy"
+    "core:window:allow-destroy",
+    "updater:default",
+    "process:default"
   ]
 }

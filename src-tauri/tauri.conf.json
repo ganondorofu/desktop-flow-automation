@@ -30,6 +30,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcxMDgwOEVBNjdBMkE2QkIKUldTN3BxSm42Z2dJY1JpVGx1M0QzZ055Rmd6OC84TkMwMVVLdWN3ZWJ3akViNXBIcm02MW9pRFMK",
+      "endpoints": ["https://github.com/ganondorofu/desktop-flow-automation/releases/latest/download/latest.json"]
+    }
   }
 }

@@ -30,6 +30,7 @@ interface ToolbarProps {
   onStepDelayChange: (ms: number) => void;
   isElevated: boolean;
   onRelaunchAsAdmin: () => void;
+  onCheckForUpdate: () => void;
   edgeStyle: EdgeStyle;
   onEdgeStyleChange: (style: EdgeStyle) => void;
   orientation: Orientation;
@@ -97,6 +98,7 @@ export function Toolbar({
   onStepDelayChange,
   isElevated,
   onRelaunchAsAdmin,
+  onCheckForUpdate,
   edgeStyle,
   onEdgeStyleChange,
   orientation,
@@ -142,6 +144,7 @@ export function Toolbar({
       label: isElevated ? t("menubar.alreadyElevated") : t("menubar.relaunchAsAdmin"),
       onSelect: isElevated ? undefined : onRelaunchAsAdmin,
     },
+    { label: t("menubar.checkForUpdate"), onSelect: onCheckForUpdate },
     { label: t("menubar.backToHome"), onSelect: onBackToHome },
   ];
 

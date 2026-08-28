@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm as confirmDialog } from "@tauri-apps/plugin-dialog";
+import { check as checkForUpdate } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { useTranslation } from "react-i18next";
 import { Toolbar, type EditorMode } from "./components/Toolbar";
 import { Palette } from "./components/Palette";
@@ -193,6 +195,25 @@ function App() {
       await invoke("relaunch_as_admin");
     } catch (error) {
       window.alert(t("menubar.relaunchAsAdminFailed", { message: String(error) }));
+    }
+  }
+
+  async function handleCheckForUpdate() {
+    try {
+      const update = await checkForUpdate();
+      if (!update) {
+        window.alert(t("menubar.upToDate"));
+        return;
+      }
+      const proceed = await confirmDialog(
+        t("menubar.updateAvailable", { version: update.version }),
+        { kind: "info" },
+      );
+      if (!proceed) return;
+      await update.downloadAndInstall();
+      await relaunch();
+    } catch (error) {
+      window.alert(t("menubar.updateFailed", { message: String(error) }));
     }
   }
 
@@ -680,6 +701,7 @@ function App() {
         onStepDelayChange={setStepDelayMs}
         isElevated={isElevated}
         onRelaunchAsAdmin={() => void handleRelaunchAsAdmin()}
+        onCheckForUpdate={() => void handleCheckForUpdate()}
         edgeStyle={edgeStyle}
         onEdgeStyleChange={setEdgeStyle}
         orientation={orientation}

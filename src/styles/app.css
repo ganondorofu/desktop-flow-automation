@@ -225,15 +225,26 @@
   font-size: 12px;
 }
 .step-delay input {
-  width: 48px;
+  width: 58px;
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--surface-2);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   box-shadow: var(--shadow-control);
+  /* The native up/down spinner arrows ate most of this field's
+   * already-narrow width, squeezing the actual number down to a
+   * sliver of illegible text — this isn't a slider or a field anyone
+   * needs increment buttons on, so drop them everywhere they render. */
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.step-delay input::-webkit-outer-spin-button,
+.step-delay input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .step-delay input:focus-visible {
   outline: 2px solid var(--teal);
@@ -1776,6 +1787,18 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .num-input:focus-visible {
   outline: 2px solid var(--teal);
   outline-offset: 1px;
+}
+/* Same reasoning as `.step-delay input` above — the native spinner
+ * arrows don't match this app's own control styling anywhere they
+ * show up, not just in that one narrow field. */
+.num-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.num-input::-webkit-outer-spin-button,
+.num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 .insp-comment {
   width: 100%;

@@ -5,6 +5,7 @@ import { VariableTextArea } from "./VariableTextArea";
 import { VariableTextInput } from "./VariableTextInput";
 import { VariablePicker } from "./VariablePicker";
 import { BrowserSelectorFields } from "./BrowserSelectorFields";
+import { WindowSelectorFields } from "./WindowSelectorFields";
 import { ImageSourceFields } from "./ImageSourceFields";
 import { PathField } from "./PathField";
 import { VariableOutputList } from "./VariableOutputList";
@@ -509,26 +510,26 @@ export function NodeFields({
       );
     case "wait_for_window":
       return (
-        <div className="field">
-          <label>{t("inspector.fields.windowTitle")}</label>
-          <VariableTextInput
-            value={node.windowTitle}
-            variableNames={variableNames}
-            onChangeValue={(windowTitle) => onChange((n) => (n.kind === "wait_for_window" ? { ...n, windowTitle } : n))}
-          />
-        </div>
+        <>
+          <WindowSelectorFields window={node.window} onChangeWindow={(window) => onChange((n) => (n.kind === "wait_for_window" ? { ...n, window } : n))} />
+          <div className="field">
+            <label>{t("inspector.fields.windowWaitTimeout")}</label>
+            <input
+              type="number"
+              min={0}
+              step={500}
+              className="num-input"
+              value={node.timeoutMs}
+              onChange={(e) => {
+                const timeoutMs = Math.max(0, Number(e.target.value));
+                onChange((n) => (n.kind === "wait_for_window" ? { ...n, timeoutMs } : n));
+              }}
+            />
+          </div>
+        </>
       );
     case "focus_window":
-      return (
-        <div className="field">
-          <label>{t("inspector.fields.windowTitle")}</label>
-          <VariableTextInput
-            value={node.windowTitle}
-            variableNames={variableNames}
-            onChangeValue={(windowTitle) => onChange((n) => (n.kind === "focus_window" ? { ...n, windowTitle } : n))}
-          />
-        </div>
-      );
+      return <WindowSelectorFields window={node.window} onChangeWindow={(window) => onChange((n) => (n.kind === "focus_window" ? { ...n, window } : n))} />;
     case "power_action":
       return (
         <>

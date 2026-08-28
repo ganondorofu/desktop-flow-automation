@@ -135,6 +135,35 @@ export function makeBrowserSelector(value = ""): BrowserSelectorField {
   return { kind: "css", value, name: "" };
 }
 
+/** How `wait_for_window`/`focus_window` find the window they mean —
+ *  mirrors `flow_schema::WindowSelector`/`WindowSelectorSpec`. `title`
+ *  is exact-match (the original, simplest case); `title_contains`
+ *  survives a title that grew a prefix/suffix; `process` ignores
+ *  title entirely and matches by owning executable; `title_then_process`
+ *  tries the exact title first and falls back to the process — what
+ *  the "pick from open windows" button actually fills in, since a
+ *  live window naturally has both. `title`/`text`/`processName` are
+ *  the fields relevant to whichever `kind` is selected; the others
+ *  sit unused, the same flat-shape convention `BrowserSelectorField`
+ *  already uses. */
+export type WindowSelectorField = {
+  kind: "title" | "title_contains" | "process" | "title_then_process";
+  title: string;
+  text: string;
+  processName: string;
+};
+
+export function makeWindowSelector(title = ""): WindowSelectorField {
+  return { kind: "title", title, text: "", processName: "" };
+}
+
+function describeWindowSelector(field: WindowSelectorField): string {
+  if (field.kind === "title_contains") return `⊃ "${field.text}"`;
+  if (field.kind === "process") return field.processName;
+  if (field.kind === "title_then_process") return `"${field.title}" / ${field.processName}`;
+  return field.title;
+}
+
 /** Where a `find_image` step's reference image comes from — mirrors
  *  `flow_schema::ImageSource`. `path` points at a file on disk (the
  *  original behavior); `embedded` carries the image's base64-encoded
@@ -247,7 +276,7 @@ export type FlowNode = (
       region?: { x: number; y: number; width: number; height: number };
       enabled: boolean;
     }
-  | { id: string; kind: "wait_for_window"; windowTitle: string; enabled: boolean }
+  | { id: string; kind: "wait_for_window"; window: WindowSelectorField; timeoutMs: number; enabled: boolean }
   | { id: string; kind: "stop"; enabled: boolean }
   | { id: string; kind: "launch_app"; path: string; args: string; enabled: boolean }
   | { id: string; kind: "open_url"; url: string; enabled: boolean }
@@ -259,7 +288,7 @@ export type FlowNode = (
   | { id: string; kind: "delete_file"; path: string; enabled: boolean }
   | { id: string; kind: "create_directory"; path: string; enabled: boolean }
   | { id: string; kind: "list_directory"; path: string; variable: string; enabled: boolean }
-  | { id: string; kind: "focus_window"; windowTitle: string; enabled: boolean }
+  | { id: string; kind: "focus_window"; window: WindowSelectorField; enabled: boolean }
   | { id: string; kind: "power_action"; mode: "shutdown" | "restart"; force: boolean; enabled: boolean }
   | { id: string; kind: "lock_workstation"; enabled: boolean }
   | { id: string; kind: "read_clipboard"; variable: string; enabled: boolean }
@@ -562,6 +591,13 @@ function selectorIsBlank(selector: BrowserSelectorField): boolean {
     : isBlank(selector.value);
 }
 
+function windowSelectorIsBlank(window: WindowSelectorField): boolean {
+  if (window.kind === "title_contains") return isBlank(window.text);
+  if (window.kind === "process") return isBlank(window.processName);
+  if (window.kind === "title_then_process") return isBlank(window.title) || isBlank(window.processName);
+  return isBlank(window.title);
+}
+
 function imageSourceIsBlank(image: ImageSourceField): boolean {
   return image.kind === "embedded" ? isBlank(image.data) : isBlank(image.value);
 }
@@ -610,7 +646,7 @@ export function nodeMissingFieldKeys(node: FlowNode): string[] {
       break;
     case "wait_for_window":
     case "focus_window":
-      need(isBlank(node.windowTitle), "windowTitle");
+      need(windowSelectorIsBlank(node.window), "window");
       break;
     case "launch_app":
       need(isBlank(node.path), "appPath");
@@ -785,9 +821,9 @@ export function describeNode(
     case "find_text_ocr":
       return { title: paletteLabel(t, "findTextOcr", mode), sub: kindLabel, body: `"${node.text}"` };
     case "wait_for_window":
-      return { title: paletteLabel(t, "waitForWindow", mode), sub: kindLabel, body: node.windowTitle };
+      return { title: paletteLabel(t, "waitForWindow", mode), sub: kindLabel, body: describeWindowSelector(node.window) };
     case "focus_window":
-      return { title: paletteLabel(t, "focusWindow", mode), sub: kindLabel, body: node.windowTitle };
+      return { title: paletteLabel(t, "focusWindow", mode), sub: kindLabel, body: describeWindowSelector(node.window) };
     case "power_action":
       return { title: paletteLabel(t, "powerAction", mode), sub: kindLabel, body: paletteLabel(t, node.mode, mode) };
     case "lock_workstation":

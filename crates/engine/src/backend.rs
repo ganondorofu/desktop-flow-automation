@@ -51,8 +51,8 @@ pub trait AutomationBackend {
     fn key_release(&self, key: &str, modifiers: KeyModifiers) -> Result<(), String>;
     fn find_image(&self, image: &ImageSource, mode: MatchMode, threshold: f64, min_scale: f64, max_scale: f64, scale_steps: u32) -> Result<ImageMatch, String>;
     fn find_text_ocr(&self, text: &str, region: Option<&CaptureRegion>) -> Result<(), String>;
-    fn wait_for_window(&self, window_title: &str) -> Result<(), String>;
-    fn focus_window(&self, window_title: &str) -> Result<(), String>;
+    fn wait_for_window(&self, window: &flow_schema::WindowSelector, timeout_ms: u32) -> Result<(), String>;
+    fn focus_window(&self, window: &flow_schema::WindowSelector) -> Result<(), String>;
     fn shutdown(&self, force: bool) -> Result<(), String>;
     fn restart(&self, force: bool) -> Result<(), String>;
     fn lock_workstation(&self) -> Result<(), String>;
@@ -148,11 +148,11 @@ impl AutomationBackend for WindowsBackend {
     fn find_text_ocr(&self, text: &str, region: Option<&CaptureRegion>) -> Result<(), String> {
         automation::find_text_on_screen(text, region).map_err(|e| e.to_string())
     }
-    fn wait_for_window(&self, window_title: &str) -> Result<(), String> {
-        automation::window_exists(window_title).map_err(|e| e.to_string())
+    fn wait_for_window(&self, window: &flow_schema::WindowSelector, timeout_ms: u32) -> Result<(), String> {
+        automation::wait_for_window(window, timeout_ms).map_err(|e| e.to_string())
     }
-    fn focus_window(&self, window_title: &str) -> Result<(), String> {
-        automation::focus_window(window_title).map_err(|e| e.to_string())
+    fn focus_window(&self, window: &flow_schema::WindowSelector) -> Result<(), String> {
+        automation::focus_window(window).map_err(|e| e.to_string())
     }
     fn shutdown(&self, force: bool) -> Result<(), String> {
         automation::shutdown(force).map_err(|e| e.to_string())

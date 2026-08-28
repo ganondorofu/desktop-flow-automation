@@ -178,7 +178,7 @@ impl AutomationBackend for MockBackend {
             Ok(())
         }
     }
-    fn wait_for_window(&self, _window_title: &str) -> Result<(), String> {
+    fn wait_for_window(&self, _window: &flow_schema::WindowSelector, _timeout_ms: u32) -> Result<(), String> {
         self.click_calls.set(self.click_calls.get() + 1);
         let remaining = self.remaining_failures.get();
         if remaining > 0 {
@@ -188,7 +188,7 @@ impl AutomationBackend for MockBackend {
             Ok(())
         }
     }
-    fn focus_window(&self, _window_title: &str) -> Result<(), String> {
+    fn focus_window(&self, _window: &flow_schema::WindowSelector) -> Result<(), String> {
         Ok(())
     }
     fn shutdown(&self, _force: bool) -> Result<(), String> {
@@ -1214,7 +1214,8 @@ fn wait_for_window_retries_until_the_window_exists() {
         steps: vec![Step {
             id: "wait_for_notepad".into(),
             action: Action::WaitForWindow {
-                window_title: "Notepad".into(),
+                window: "Notepad".into(),
+                timeout_ms: 10_000,
             },
             retry: RetryPolicy {
                 max_attempts: 3,
@@ -1246,7 +1247,8 @@ fn wait_for_window_fails_the_flow_when_it_never_appears() {
             Step {
                 id: "wait_for_notepad".into(),
                 action: Action::WaitForWindow {
-                    window_title: "Notepad".into(),
+                    window: "Notepad".into(),
+                    timeout_ms: 10_000,
                 },
                 retry: RetryPolicy {
                     max_attempts: 2,

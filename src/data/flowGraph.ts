@@ -9,6 +9,7 @@ import {
   makeBrowserSelector,
   makeImageSource,
   makeKeyModifiers,
+  makeWindowSelector,
   type Branch,
   type BranchKind,
   type Connection,
@@ -117,9 +118,9 @@ export function makeLeaf(kind: LeafKind): FlowNode {
     case "find_text_ocr":
       return { id, kind, text: "Sign in", enabled: true };
     case "wait_for_window":
-      return { id, kind, windowTitle: "Untitled - Notepad", enabled: true };
+      return { id, kind, window: makeWindowSelector("Untitled - Notepad"), timeoutMs: 10_000, enabled: true };
     case "focus_window":
-      return { id, kind, windowTitle: "Untitled - Notepad", enabled: true };
+      return { id, kind, window: makeWindowSelector("Untitled - Notepad"), enabled: true };
     case "power_action":
       return { id, kind, mode: "shutdown", force: false, enabled: true };
     case "lock_workstation":

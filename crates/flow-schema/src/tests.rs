@@ -569,7 +569,8 @@ fn roundtrips_a_wait_for_window_step() {
         steps: vec![Step {
             id: "wait_for_window_1".into(),
             action: Action::WaitForWindow {
-                window_title: "Notepad".into(),
+                window: "Notepad".into(),
+                timeout_ms: 10_000,
             },
             retry: RetryPolicy {
                 max_attempts: 5,
@@ -736,7 +737,7 @@ fn roundtrips_every_system_and_clipboard_step() {
     }
 
     let steps = vec![
-        leaf("focus", Action::FocusWindow { window_title: "Notepad".into() }),
+        leaf("focus", Action::FocusWindow { window: "Notepad".into() }),
         leaf("lock", Action::LockWorkstation),
         leaf("read_cb", Action::ReadClipboard { variable: "clip".into() }),
         leaf("write_cb", Action::WriteClipboard { text: "hello".into() }),

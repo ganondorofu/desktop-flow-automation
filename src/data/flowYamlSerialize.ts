@@ -2,7 +2,7 @@
  *  parses (`flow_schema::parse_flow`) — see `flowYamlParse.ts` for the
  *  inverse direction. */
 import { collectComments } from "./flowGraph";
-import type { Branch, BrowserSelectorField, FlowNode } from "./flowModel";
+import type { Branch, BrowserSelectorField, FlowNode, WindowSelectorField } from "./flowModel";
 
 /** Emits `value` as a double-quoted YAML scalar. Every field this
  *  writes is exactly one physical line (the emitter builds the file
@@ -37,6 +37,28 @@ function browserSelectorYamlLines(indent: string, field: BrowserSelectorField): 
     `${indent}  kind: attribute`,
     `${indent}  name: ${yamlString(field.name)}`,
     `${indent}  value: ${yamlString(field.value)}`,
+  ];
+}
+
+/** Mirrors `flow_schema::WindowSelector`'s untagged shape: `title`
+ *  emits as a plain quoted string (the exact-match/simple case), the
+ *  other three modes emit as a small nested mapping tagged by `kind`.
+ */
+function windowSelectorYamlLines(indent: string, label: string, field: WindowSelectorField): string[] {
+  if (field.kind === "title") {
+    return [`${indent}${label}: ${yamlString(field.title)}`];
+  }
+  if (field.kind === "title_contains") {
+    return [`${indent}${label}:`, `${indent}  kind: title_contains`, `${indent}  text: ${yamlString(field.text)}`];
+  }
+  if (field.kind === "process") {
+    return [`${indent}${label}:`, `${indent}  kind: process`, `${indent}  process_name: ${yamlString(field.processName)}`];
+  }
+  return [
+    `${indent}${label}:`,
+    `${indent}  kind: title_then_process`,
+    `${indent}  title: ${yamlString(field.title)}`,
+    `${indent}  process_name: ${yamlString(field.processName)}`,
   ];
 }
 
@@ -172,9 +194,14 @@ function nodeActionYamlLines(node: FlowNode, indent: string, head: string): stri
           : []),
       ];
     case "wait_for_window":
-      return [head, `${indent}  type: wait_for_window`, `${indent}  window_title: ${yamlString(node.windowTitle)}`];
+      return [
+        head,
+        `${indent}  type: wait_for_window`,
+        ...windowSelectorYamlLines(`${indent}  `, "window", node.window),
+        `${indent}  timeout_ms: ${Math.round(node.timeoutMs)}`,
+      ];
     case "focus_window":
-      return [head, `${indent}  type: focus_window`, `${indent}  window_title: ${yamlString(node.windowTitle)}`];
+      return [head, `${indent}  type: focus_window`, ...windowSelectorYamlLines(`${indent}  `, "window", node.window)];
     case "power_action":
       return [head, `${indent}  type: power_action`, `${indent}  mode: ${node.mode}`, ...(node.force ? [`${indent}  force: true`] : [])];
     case "lock_workstation":

@@ -1,5 +1,9 @@
-use crate::{Branch, BrowserSelector, CaptureRegion, ClickTarget, ElementSelector, ImageSource, PointTarget};
+use crate::{Branch, BrowserSelector, CaptureRegion, ClickTarget, ElementSelector, ImageSource, PointTarget, WindowSelector};
 use serde::{Deserialize, Serialize};
+
+fn default_wait_for_window_timeout_ms() -> u32 {
+    10_000
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -186,17 +190,22 @@ pub enum Action {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         region: Option<CaptureRegion>,
     },
-    /// Checks whether a top-level window with this title exists right
-    /// now — fails if not, so combine with `retry` for "wait until
-    /// this window opens" semantics, the same pattern `FindImage` uses
-    /// for "wait until this image appears".
+    /// Polls for up to `timeout_ms` until a window matching `window`
+    /// exists, checking every 500ms — genuinely waits on its own now,
+    /// unlike relying on the generic per-step `retry` policy (whose
+    /// `max_attempts` defaults to 0, meaning "one single check, no
+    /// waiting at all" unless a flow author happens to configure it —
+    /// exactly the "times out instantly" behavior this step's own name
+    /// promised not to have).
     WaitForWindow {
-        window_title: String,
+        window: WindowSelector,
+        #[serde(default = "default_wait_for_window_timeout_ms")]
+        timeout_ms: u32,
     },
-    /// Brings the top-level window titled `window_title` to the
-    /// foreground and gives it keyboard focus.
+    /// Brings the window matching `window` to the foreground and gives
+    /// it keyboard focus.
     FocusWindow {
-        window_title: String,
+        window: WindowSelector,
     },
     /// Shuts down or restarts the machine. `force` closes apps that
     /// would otherwise block it by prompting to save unsaved work.

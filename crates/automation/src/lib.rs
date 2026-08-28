@@ -1193,17 +1193,198 @@ if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
 /// gives it keyboard focus — the desktop-native counterpart of
 /// `WaitForWindow`, for a flow that needs to make sure the right
 /// window has focus before typing/clicking into it.
-pub fn focus_window(title: &str) -> Result<(), AutomationError> {
+pub fn focus_window(window: &flow_schema::WindowSelector) -> Result<(), AutomationError> {
+    let element = resolve_window(window)?;
+    element.set_focus().map_err(|e| AutomationError(format!("failed to focus window ({}): {e}", describe_window_selector(window))))
+}
+
+/// A window this app can see on the desktop right now — the
+/// "OBS-style pick from a live list" the window-target field's own
+/// picker button shows, and what it fills the field in with once you
+/// click one. `process_name` is empty when the owning process
+/// couldn't be resolved (rare — usually means it exited between
+/// enumerating the window and looking its PID up).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WindowInfo {
+    pub title: String,
+    pub process_name: String,
+}
+
+/// Every top-level, visible, titled window currently on the desktop —
+/// what the window-target picker shows. Deliberately not using
+/// UI Automation's own tree walk here (unlike `resolve_window` below):
+/// a plain `EnumWindows` pass is far cheaper for "list everything"
+/// than asking UIA to build accessibility info for every top-level
+/// window just to read its title and owning process.
+pub fn list_windows() -> Result<Vec<WindowInfo>, AutomationError> {
+    let pid_names = process_name_map()?;
+    Ok(enumerate_top_level_windows()
+        .into_iter()
+        .map(|w| WindowInfo { title: w.title, process_name: pid_names.get(&w.pid).cloned().unwrap_or_default() })
+        .collect())
+}
+
+struct EnumeratedWindow {
+    hwnd: windows::Win32::Foundation::HWND,
+    pid: u32,
+    title: String,
+}
+
+/// Raw `EnumWindows` pass — every visible top-level window with a
+/// non-empty title (owned/tool windows, which don't get their own
+/// taskbar entry either, are skipped, matching what a user would
+/// actually recognize as "an open window").
+fn enumerate_top_level_windows() -> Vec<EnumeratedWindow> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GW_OWNER};
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return true.into();
+            }
+            // A window with an owner isn't a top-level app window a
+            // user would pick from a list — a tooltip, a dropdown,
+            // most dialog boxes.
+            if GetWindow(hwnd, GW_OWNER).map(|owner| !owner.is_invalid()).unwrap_or(false) {
+                return true.into();
+            }
+            let len = GetWindowTextLengthW(hwnd);
+            if len == 0 {
+                return true.into();
+            }
+            let mut buf = vec![0u16; (len + 1) as usize];
+            let actual = GetWindowTextW(hwnd, &mut buf);
+            if actual == 0 {
+                return true.into();
+            }
+            let title = String::from_utf16_lossy(&buf[..actual as usize]);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let windows = &mut *(lparam.0 as *mut Vec<EnumeratedWindow>);
+            windows.push(EnumeratedWindow { hwnd, pid, title });
+            true.into()
+        }
+    }
+
+    let mut windows: Vec<EnumeratedWindow> = Vec::new();
+    unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::EnumWindows(Some(enum_proc), LPARAM(&mut windows as *mut _ as isize));
+    }
+    windows
+}
+
+/// pid -> exe filename (e.g. `"notepad.exe"`), for every currently
+/// running process — shells out to `tasklist` once and parses its CSV
+/// output, the same approach `check_process`/`kill_process` already
+/// use rather than walking the process table via raw Win32 calls.
+fn process_name_map() -> Result<std::collections::HashMap<u32, String>, AutomationError> {
+    let output = hidden_command("tasklist")
+        .args(["/FO", "CSV", "/NH"])
+        .output()
+        .map_err(|e| AutomationError(format!("failed to run tasklist: {e}")))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut map = std::collections::HashMap::new();
+    for line in text.lines() {
+        // Each row: "name.exe","1234","Console","1","10,000 K"
+        let fields: Vec<&str> = line.split("\",\"").collect();
+        let (Some(name), Some(pid_field)) = (fields.first(), fields.get(1)) else { continue };
+        let name = name.trim_start_matches('"');
+        if let Ok(pid) = pid_field.parse::<u32>() {
+            map.insert(pid, name.to_string());
+        }
+    }
+    Ok(map)
+}
+
+fn describe_window_selector(selector: &flow_schema::WindowSelector) -> String {
+    use flow_schema::{WindowSelector, WindowSelectorSpec};
+    match selector {
+        WindowSelector::Title(title) => format!("title \"{title}\""),
+        WindowSelector::Other(WindowSelectorSpec::TitleContains { text }) => format!("title containing \"{text}\""),
+        WindowSelector::Other(WindowSelectorSpec::Process { process_name }) => format!("process \"{process_name}\""),
+        WindowSelector::Other(WindowSelectorSpec::TitleThenProcess { title, process_name }) => {
+            format!("title \"{title}\" (or process \"{process_name}\")")
+        }
+    }
+}
+
+/// Finds the window `selector` describes, as a UI Automation element
+/// ready to focus/search within — a single, non-waiting check;
+/// `wait_for_window` below is what actually polls. Each mode maps to
+/// a different real-world durability tradeoff: `Title` is exact and
+/// cheap but breaks the instant the title changes at all;
+/// `TitleContains` survives an appended/prepended suffix but not a
+/// title that changes completely; `Process` survives any title change
+/// but can't tell two windows of the same app apart; `TitleThenProcess`
+/// — what the picker actually produces — gets the precision of an
+/// exact match when it still holds, without breaking outright once it
+/// doesn't.
+fn resolve_window(selector: &flow_schema::WindowSelector) -> Result<uiautomation::UIElement, AutomationError> {
+    use flow_schema::{WindowSelector, WindowSelectorSpec};
     let automation = UIAutomation::new().map_err(|e| AutomationError(format!("UI Automation init failed: {e}")))?;
-    let element = automation
-        .create_matcher()
-        .name(title)
-        .timeout(3000)
-        .find_first()
-        .map_err(|e| AutomationError(format!("window '{title}' not found: {e}")))?;
-    element
-        .set_focus()
-        .map_err(|e| AutomationError(format!("failed to focus window '{title}': {e}")))
+    match selector {
+        WindowSelector::Title(title) => automation
+            .create_matcher()
+            .name(title)
+            .timeout(300)
+            .find_first()
+            .map_err(|e| AutomationError(format!("window '{title}' not found: {e}"))),
+        WindowSelector::Other(WindowSelectorSpec::TitleContains { text }) => automation
+            .create_matcher()
+            .contains_name(text)
+            .timeout(300)
+            .find_first()
+            .map_err(|e| AutomationError(format!("no window with a title containing '{text}' found: {e}"))),
+        WindowSelector::Other(WindowSelectorSpec::Process { process_name }) => window_by_process(&automation, process_name),
+        WindowSelector::Other(WindowSelectorSpec::TitleThenProcess { title, process_name }) => automation
+            .create_matcher()
+            .name(title)
+            .timeout(300)
+            .find_first()
+            .or_else(|_| window_by_process(&automation, process_name)),
+    }
+}
+
+fn window_by_process(automation: &UIAutomation, process_name: &str) -> Result<uiautomation::UIElement, AutomationError> {
+    let target = enumerate_top_level_windows()
+        .into_iter()
+        .find(|w| {
+            process_name_map()
+                .ok()
+                .and_then(|m| m.get(&w.pid).cloned())
+                .is_some_and(|name| name.eq_ignore_ascii_case(process_name))
+        })
+        .ok_or_else(|| AutomationError(format!("no window belonging to process '{process_name}' found")))?;
+    // `uiautomation`'s own `Handle` wraps a *different* `windows`
+    // crate version's `HWND` than this crate depends on (0.57 vs
+    // 0.58 — both still pre-1.0, so cargo keeps them as distinct
+    // types even though they're structurally identical), so `.into()`
+    // straight from our `HWND` doesn't type-check. Going through the
+    // raw pointer value (`Handle: From<isize>`) sidesteps that.
+    automation
+        .element_from_handle((target.hwnd.0 as isize).into())
+        .map_err(|e| AutomationError(format!("failed to inspect the window for process '{process_name}': {e}")))
+}
+
+/// Polls for up to `timeout_ms`, checking every 500ms, until a window
+/// matching `selector` exists — see `Action::WaitForWindow`'s doc
+/// comment for why this waits on its own now instead of leaning on
+/// the generic per-step retry policy.
+pub fn wait_for_window(selector: &flow_schema::WindowSelector, timeout_ms: u32) -> Result<(), AutomationError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms as u64);
+    loop {
+        if resolve_window(selector).is_ok() {
+            return Ok(());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(AutomationError(format!(
+                "no window matching {} appeared within {timeout_ms}ms",
+                describe_window_selector(selector)
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
 }
 
 /// Reads the clipboard's current text, or fails if it doesn't hold
@@ -1465,25 +1646,6 @@ pub fn relaunch_elevated() -> Result<(), AutomationError> {
         }
     }
     Ok(())
-}
-
-/// Checks whether a top-level window with this exact title exists
-/// right now — a single instantaneous check, not a wait. The caller
-/// (the engine's `Step.retry` machinery) supplies the actual "keep
-/// checking until it shows up" polling loop, the same pattern
-/// `find_image_on_screen` uses. Uses a short internal timeout so a
-/// single check stays snappy — the outer retry interval is what
-/// controls the real wait cadence.
-pub fn window_exists(title: &str) -> Result<(), AutomationError> {
-    let automation =
-        UIAutomation::new().map_err(|e| AutomationError(format!("UI Automation init failed: {e}")))?;
-    automation
-        .create_matcher()
-        .name(title)
-        .timeout(500)
-        .find_first()
-        .map(|_| ())
-        .map_err(|e| AutomationError(format!("window '{title}' not found: {e}")))
 }
 
 fn find_element(selector: &ElementSelector) -> Result<uiautomation::UIElement, AutomationError> {

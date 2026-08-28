@@ -27,7 +27,7 @@ use crate::debug::{
 use crate::observer::{ExecutionObserver, StepFailure, StepOutcome};
 use flow_schema::{
     Action, BrowserSelector, BrowserSelectorSpec, CalcOp, ClickTarget, Condition, Connection,
-    ElementSelector, FailureBehavior, Flow, MonitorPoint, PointTarget, Step,
+    ElementSelector, FailureBehavior, Flow, MonitorPoint, PointTarget, Step, WindowSelector, WindowSelectorSpec,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -334,6 +334,24 @@ fn resolve_selector(selector: &BrowserSelector, variables: &HashMap<String, Stri
     }
 }
 
+/// `resolve()` for whichever string(s) a `WindowSelector` actually
+/// holds — a title, a title-contains fragment, or a process name (and
+/// both, for the title-then-process fallback mode).
+fn resolve_window_selector(selector: &WindowSelector, variables: &HashMap<String, String>) -> WindowSelector {
+    match selector {
+        WindowSelector::Title(title) => WindowSelector::Title(resolve(title, variables)),
+        WindowSelector::Other(WindowSelectorSpec::TitleContains { text }) => {
+            WindowSelector::Other(WindowSelectorSpec::TitleContains { text: resolve(text, variables) })
+        }
+        WindowSelector::Other(WindowSelectorSpec::Process { process_name }) => {
+            WindowSelector::Other(WindowSelectorSpec::Process { process_name: resolve(process_name, variables) })
+        }
+        WindowSelector::Other(WindowSelectorSpec::TitleThenProcess { title, process_name }) => {
+            WindowSelector::Other(WindowSelectorSpec::TitleThenProcess { title: resolve(title, variables), process_name: resolve(process_name, variables) })
+        }
+    }
+}
+
 fn run_action(
     action: &Action,
     ctx: &mut ExecutionContext,
@@ -590,11 +608,11 @@ fn run_action(
         Action::FindTextOcr { text, region } => backend
             .find_text_ocr(&resolve(text, &ctx.variables), region.as_ref())
             .map(|()| Signal::Continue),
-        Action::WaitForWindow { window_title } => {
-            backend.wait_for_window(&resolve(window_title, &ctx.variables)).map(|()| Signal::Continue)
-        }
-        Action::FocusWindow { window_title } => {
-            backend.focus_window(&resolve(window_title, &ctx.variables)).map(|()| Signal::Continue)
+        Action::WaitForWindow { window, timeout_ms } => backend
+            .wait_for_window(&resolve_window_selector(window, &ctx.variables), *timeout_ms)
+            .map(|()| Signal::Continue),
+        Action::FocusWindow { window } => {
+            backend.focus_window(&resolve_window_selector(window, &ctx.variables)).map(|()| Signal::Continue)
         }
         Action::PowerAction { mode, force } => match mode {
             flow_schema::PowerMode::Shutdown => backend.shutdown(*force).map(|()| Signal::Continue),

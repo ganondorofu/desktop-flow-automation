@@ -260,6 +260,15 @@ fn list_installed_browsers() -> Vec<automation::BrowserInfo> {
     automation::find_installed_browsers()
 }
 
+/// Every visible top-level window on the desktop right now — feeds
+/// the "ここから選ぶ" (pick from open windows) button on
+/// `WaitForWindow`/`FocusWindow`'s window-target field, the OBS-style
+/// live picker rather than hand-typing a title.
+#[tauri::command]
+fn list_open_windows() -> Result<Vec<automation::WindowInfo>, String> {
+    automation::list_windows().map_err(|e| e.to_string())
+}
+
 /// Relaunches Relay elevated (via Windows' own UAC prompt) and exits
 /// the current, non-elevated instance once the new one is confirmed
 /// running — used by the "管理者として再起動" action for automating a
@@ -512,7 +521,8 @@ pub fn run() {
             browser_cancel_pick,
             is_elevated,
             relaunch_as_admin,
-            list_installed_browsers
+            list_installed_browsers,
+            list_open_windows
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

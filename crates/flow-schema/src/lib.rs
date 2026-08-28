@@ -16,7 +16,7 @@ pub use action::{
 };
 pub use flow::{parse_flow, to_yaml, Branch, Connection, Flow, FlowParseError};
 pub use geometry::{CaptureRegion, ImageMatch, MonitorPoint};
-pub use selectors::{BrowserSelector, BrowserSelectorSpec, ClickTarget, ElementSelector, ImageSource, PointTarget};
+pub use selectors::{BrowserSelector, BrowserSelectorSpec, ClickTarget, ElementSelector, ImageSource, PointTarget, WindowSelector, WindowSelectorSpec};
 pub use step::{FailureBehavior, RetryPolicy, Step};
 
 #[cfg(test)]

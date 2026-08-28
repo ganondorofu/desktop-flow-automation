@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { Crosshair } from "lucide-react";
+import { AppWindow, Crosshair } from "lucide-react";
 import { pickAndCropImage } from "../../data/regionPicker";
 
 export const RECORD_DELAY_MS = 3000;
@@ -201,6 +201,67 @@ export function PickBrowserElementButton({ onPicked }: { onPicked: (selector: st
       )}
       {preview && !failed && <span className="insp-capture-status">{preview}</span>}
       {failed && <span className="insp-capture-status insp-capture-error">{failed}</span>}
+    </div>
+  );
+}
+
+/** The OBS-style "pick from open windows" button for `wait_for_window`/
+ *  `focus_window`'s window-target field: fetches every visible
+ *  top-level window right now (`list_open_windows`) and shows them in
+ *  a dropdown instead of asking the user to hand-type a title they
+ *  might get slightly wrong (a trailing space, a case mismatch, a
+ *  title Windows appends to). Picking one hands back both the title
+ *  and owning process, so the caller can fill in the combined
+ *  title-then-process fallback mode. */
+export function WindowPickerSelect({ onPicked }: { onPicked: (title: string, processName: string) => void }) {
+  const { t } = useTranslation();
+  const [windows, setWindows] = useState<{ title: string; process_name: string }[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  async function refresh() {
+    setLoading(true);
+    setFailed(false);
+    try {
+      const list = await invoke<{ title: string; process_name: string }[]>("list_open_windows");
+      setWindows(list);
+    } catch {
+      setFailed(true);
+      setWindows(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="insp-capture">
+      <button type="button" className="insp-record-btn" onClick={() => void refresh()} disabled={loading}>
+        <AppWindow size={13} strokeWidth={1.9} aria-hidden="true" />
+        {loading ? t("inspector.fields.windowPickerLoading") : t("inspector.fields.windowPickerRefresh")}
+      </button>
+      {windows && windows.length > 0 && (
+        <select
+          className="num-input"
+          value=""
+          onChange={(e) => {
+            const idx = Number(e.target.value);
+            const w = windows[idx];
+            if (w) onPicked(w.title, w.process_name);
+          }}
+        >
+          <option value="" disabled>
+            {t("inspector.fields.windowPickerChoose")}
+          </option>
+          {windows.map((w, i) => (
+            <option key={i} value={i}>
+              {w.title}
+              {w.process_name ? ` — ${w.process_name}` : ""}
+            </option>
+          ))}
+        </select>
+      )}
+      {windows && windows.length === 0 && <span className="insp-capture-status">{t("inspector.fields.windowPickerEmpty")}</span>}
+      {failed && <span className="insp-capture-status insp-capture-error">{t("inspector.fields.windowPickerFailed")}</span>}
     </div>
   );
 }

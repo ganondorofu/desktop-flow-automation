@@ -122,3 +122,58 @@ impl From<String> for ImageSource {
         ImageSource::Path(value)
     }
 }
+
+/// How `WaitForWindow`/`FocusWindow` find the window they mean.
+/// Exact-title-only matching (the original, and still the default for
+/// a bare YAML string) breaks the moment a title changes even
+/// slightly — a page title appended after navigation, an unsaved-file
+/// asterisk, ... — which is why every other mode here exists: the
+/// same "give up on textual exactness, match the underlying thing
+/// instead" idea OBS's window-capture source offers as its own
+/// matching-priority modes.
+///
+/// A bare YAML string (`window: "Notepad"`) still deserializes into
+/// `Title` — the exact-match case is the simplest to hand-author and
+/// was the only option before this existed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WindowSelector {
+    Title(String),
+    Other(WindowSelectorSpec),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WindowSelectorSpec {
+    /// Matches a window whose title contains `text` (case-insensitive)
+    /// — forgiving of a title that grew a suffix/prefix since it was
+    /// first picked, without giving up on the title entirely.
+    TitleContains { text: String },
+    /// Matches any top-level window belonging to a process named
+    /// `process_name` (e.g. `"notepad.exe"`), ignoring title
+    /// entirely — the most durable option when a window's title can
+    /// change completely (a browser navigating, a document being
+    /// renamed, ...).
+    Process { process_name: String },
+    /// Tries an exact title match first (cheap, and unambiguous when
+    /// it works); if nothing matches, falls back to `process_name`
+    /// the same way `Process` does. What the window picker actually
+    /// produces when you pick a window from the live list — captures
+    /// both an exact title (works right away, most of the time) and a
+    /// fallback that survives the title changing later, matching
+    /// OBS's own recommended default ("match title, otherwise find
+    /// window of the same executable").
+    TitleThenProcess { title: String, process_name: String },
+}
+
+impl From<&str> for WindowSelector {
+    fn from(value: &str) -> Self {
+        WindowSelector::Title(value.to_string())
+    }
+}
+
+impl From<String> for WindowSelector {
+    fn from(value: String) -> Self {
+        WindowSelector::Title(value)
+    }
+}

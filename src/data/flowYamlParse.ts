@@ -13,6 +13,7 @@ import type {
   KeyPressMode,
   MouseButtonKind,
   TextOp,
+  WindowSelectorField,
 } from "./flowModel";
 
 function parseBranchYaml(raw: unknown): Branch {
@@ -46,6 +47,20 @@ function parseBrowserSelector(raw: unknown): BrowserSelectorField {
     return { kind: "text", value: String(s.value ?? ""), name: "" };
   }
   return { kind: "css", value: "", name: "" };
+}
+
+/** Inverse of `windowSelectorYamlLines` — accepts a bare string (the
+ *  exact-title shorthand) or a `{ kind, text|process_name|title }`
+ *  mapping for the other three matching modes. */
+function parseWindowSelector(raw: unknown): WindowSelectorField {
+  if (typeof raw === "string") return { kind: "title", title: raw, text: "", processName: "" };
+  const s = (raw ?? {}) as Record<string, unknown>;
+  if (s.kind === "title_contains") return { kind: "title_contains", title: "", text: String(s.text ?? ""), processName: "" };
+  if (s.kind === "process") return { kind: "process", title: "", text: "", processName: String(s.process_name ?? "") };
+  if (s.kind === "title_then_process") {
+    return { kind: "title_then_process", title: String(s.title ?? ""), text: "", processName: String(s.process_name ?? "") };
+  }
+  return { kind: "title", title: "", text: "", processName: "" };
 }
 
 /** Inverse of `find_image`'s image-lines — a bare string (the path
@@ -163,9 +178,9 @@ function parseStepAction(raw: unknown): FlowNode {
       };
     }
     case "wait_for_window":
-      return { id, kind: "wait_for_window", windowTitle: String(s.window_title), enabled };
+      return { id, kind: "wait_for_window", window: parseWindowSelector(s.window), timeoutMs: Number(s.timeout_ms ?? 10_000), enabled };
     case "focus_window":
-      return { id, kind: "focus_window", windowTitle: String(s.window_title), enabled };
+      return { id, kind: "focus_window", window: parseWindowSelector(s.window), enabled };
     case "power_action":
       return { id, kind: "power_action", mode: s.mode === "restart" ? "restart" : "shutdown", force: Boolean(s.force ?? false), enabled };
     case "lock_workstation":

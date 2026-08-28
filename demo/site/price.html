@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>デモ株価ボード</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #eee; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .board { background: #1a1d24; border: 1px solid #2a2e38; border-radius: 12px; padding: 40px 56px; text-align: center; }
+  .label { color: #8891a5; font-size: 14px; letter-spacing: 0.08em; }
+  .name { font-size: 22px; margin: 4px 0 20px; }
+  .price { font-size: 48px; font-weight: 700; color: #4ade80; }
+  .time { margin-top: 16px; color: #5b6478; font-size: 13px; }
+  a { display: inline-block; margin-top: 24px; color: #7dd3fc; }
+</style>
+</head>
+<body>
+  <div class="board">
+    <div class="label">RELAY DEMO STOCK</div>
+    <div class="name">架空商事株式会社 (9999)</div>
+    <div class="price" id="price"></div>
+    <div class="time" id="updated"></div>
+    <a href="order.html">→ 発注ページへ</a>
+  </div>
+  <script>
+    const price = (Math.random() * 5000 + 10000).toFixed(2);
+    document.getElementById("price").textContent = "¥" + price;
+    document.getElementById("updated").textContent =
+      "最終更新: " + new Date().toLocaleTimeString("ja-JP");
+  </script>
+</body>
+</html>

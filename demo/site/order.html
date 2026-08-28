@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<title>デモ発注フォーム</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #eee; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .card { background: #1a1d24; border: 1px solid #2a2e38; border-radius: 12px; padding: 32px 40px; width: 340px; }
+  h1 { font-size: 18px; margin: 0 0 20px; }
+  label { display: block; font-size: 13px; color: #8891a5; margin: 14px 0 4px; }
+  input, textarea { width: 100%; box-sizing: border-box; background: #0f1115; border: 1px solid #2a2e38; border-radius: 6px; color: #eee; padding: 8px 10px; font-size: 14px; }
+  textarea { resize: vertical; min-height: 60px; }
+  button { margin-top: 20px; width: 100%; background: #4ade80; color: #0f1115; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 700; cursor: pointer; }
+  #confirmation { font-size: 16px; line-height: 1.6; }
+  #confirmation .num { color: #4ade80; font-weight: 700; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div id="form-view">
+      <h1>架空商事株式会社 (9999) を発注</h1>
+      <label for="qty">数量</label>
+      <input id="qty" type="text" value="1" />
+      <label for="note">メモ</label>
+      <textarea id="note"></textarea>
+      <button id="submit-btn" type="button">発注する</button>
+    </div>
+    <div id="confirmation" style="display:none"></div>
+  </div>
+  <script>
+    document.getElementById("submit-btn").addEventListener("click", () => {
+      const qty = document.getElementById("qty").value;
+      const note = document.getElementById("note").value;
+      const orderNo = "RLY-" + Math.random().toString(36).slice(2, 8).toUpperCase();
+      document.getElementById("form-view").style.display = "none";
+      const box = document.getElementById("confirmation");
+      box.style.display = "block";
+      box.innerHTML =
+        "受付完了<br>受付番号: <span class=\"num\">" + orderNo + "</span><br>数量: " + qty +
+        "<br>メモ: " + (note || "(なし)");
+    });
+  </script>
+</body>
+</html>

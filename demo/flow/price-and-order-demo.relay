@@ -1,0 +1,128 @@
+name: 価格取得＆自動発注デモ
+entry: start
+steps:
+  - id: start
+    type: start
+
+  - id: launch_browser
+    type: launch_browser
+    url: https://ganondorofu.github.io/desktop-flow-automation/price.html
+    variable: browser_instance
+
+  - id: get_price
+    type: browser_get_text
+    selector: "#price"
+    variable: price_text
+    instance: "%browser_instance%"
+
+  - id: extract_price
+    type: text_transform
+    op: regex_match
+    text: "%price_text%"
+    arg1: "[0-9.]+"
+    arg2: ""
+    variable: price_value
+
+  - id: goto_order
+    type: browser_navigate
+    url: https://ganondorofu.github.io/desktop-flow-automation/order.html
+    instance: "%browser_instance%"
+
+  - id: wait_form
+    type: browser_wait_for_selector
+    selector: "#qty"
+    instance: "%browser_instance%"
+
+  - id: set_qty
+    type: browser_set_value
+    selector: "#qty"
+    value: "3"
+    instance: "%browser_instance%"
+
+  - id: set_note
+    type: browser_set_value
+    selector: "#note"
+    value: "現在価格 %price_value% 円で自動発注デモ"
+    instance: "%browser_instance%"
+
+  - id: click_submit
+    type: browser_click
+    selector: "#submit-btn"
+    instance: "%browser_instance%"
+
+  - id: wait_confirm
+    type: browser_wait_for_selector
+    selector: "#confirmation"
+    instance: "%browser_instance%"
+
+  - id: get_confirm
+    type: browser_get_text
+    selector: "#confirmation"
+    variable: order_confirmation
+    instance: "%browser_instance%"
+
+  - id: notify_headless_done
+    type: notify
+    title: 裏側処理 完了
+    message: "マウス/キーボードを一切動かさず、価格取得と自動発注が完了しました。"
+
+  - id: launch_notepad
+    type: launch_app
+    path: notepad.exe
+    args: ""
+
+  - id: wait_launch
+    type: wait
+    seconds: 1.0
+
+  - id: type_report
+    type: type_text
+    text: "=== 価格取得＆自動発注 デモ結果 ===\n取得価格: %price_value% 円\n発注結果: %order_confirmation%\n\n(この行はマウス/キーボードを実際に操作して入力しています)"
+
+  - id: move_mouse_demo
+    type: move_mouse
+    target:
+      kind: coordinate
+      monitor_id: primary
+      x: 500
+      y: 400
+    duration_ms: 700
+
+  - id: notify_done
+    type: show_message
+    title: デモ完了
+    message: "Phase 1: ブラウザ拡張によるヘッドレス取得＋自動送信\nPhase 2: メモ帳へのGUI表示（実際のキー入力・マウス移動）\n\nどちらも同じRelayフロー内で実行されました。"
+
+connections:
+  - from: start
+    to: launch_browser
+  - from: launch_browser
+    to: get_price
+  - from: get_price
+    to: extract_price
+  - from: extract_price
+    to: goto_order
+  - from: goto_order
+    to: wait_form
+  - from: wait_form
+    to: set_qty
+  - from: set_qty
+    to: set_note
+  - from: set_note
+    to: click_submit
+  - from: click_submit
+    to: wait_confirm
+  - from: wait_confirm
+    to: get_confirm
+  - from: get_confirm
+    to: notify_headless_done
+  - from: notify_headless_done
+    to: launch_notepad
+  - from: launch_notepad
+    to: wait_launch
+  - from: wait_launch
+    to: type_report
+  - from: type_report
+    to: move_mouse_demo
+  - from: move_mouse_demo
+    to: notify_done

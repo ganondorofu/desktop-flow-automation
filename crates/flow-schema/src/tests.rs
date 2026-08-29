@@ -324,6 +324,39 @@ fn roundtrips_a_find_image_step() {
     assert_eq!(flow, parsed);
 }
 
+#[test]
+fn roundtrips_a_find_image_step_in_ai_mode() {
+    let flow = Flow {
+        name: "Find image (AI)".into(),
+        steps: vec![Step {
+            id: "find_save_button".into(),
+            action: Action::FindImage {
+                image: "assets/save_button.png".into(),
+                mode: MatchMode::Ai,
+                threshold: 0.85,
+                min_scale: 0.7,
+                max_scale: 1.4,
+                scale_steps: 12,
+            },
+            retry: RetryPolicy {
+                max_attempts: 3,
+                interval_ms: 500,
+                on_failure: FailureBehavior::Fail,
+            },
+            enabled: true,
+            breakpoint: false,
+        }],
+        connections: vec![],
+        entry: Some("find_save_button".into()),
+        step_delay_ms: 0,
+    };
+
+    let yaml = to_yaml(&flow).expect("serialize");
+    assert!(yaml.contains("mode: ai"));
+    let parsed = parse_flow(&yaml).expect("deserialize");
+    assert_eq!(flow, parsed);
+}
+
 /// `image: "target.png"` (a bare string) still parses straight into
 /// `ImageSource::Path` — every flow saved before embedding existed
 /// keeps working unchanged.
@@ -334,7 +367,7 @@ fn find_image_embedded_data_roundtrips_and_a_bare_path_string_still_parses() {
         steps: vec![Step {
             id: "find_logo".into(),
             action: Action::FindImage {
-                image: ImageSource::Embedded { data: "aGVsbG8=".into() },
+                image: ImageSource::Embedded { data: "aGVsbG8=".into(), captured_scale: None },
                 mode: MatchMode::Exact,
                 threshold: 0.85,
                 min_scale: 0.7,

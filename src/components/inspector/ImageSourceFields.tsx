@@ -117,7 +117,7 @@ export function ImageSourceFields({
         </div>
       )}
       <div className="insp-image-actions">
-        <CaptureRegionButton onCaptured={(data) => onChangeImage({ kind: "embedded", data })} />
+        <CaptureRegionButton onCaptured={(data, capturedScale) => onChangeImage({ kind: "embedded", data, capturedScale })} />
         <button type="button" className="insp-record-btn" onClick={() => void browse()}>
           {t("inspector.fields.imageBrowse")}
         </button>

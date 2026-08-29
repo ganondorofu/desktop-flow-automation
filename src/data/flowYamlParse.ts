@@ -70,7 +70,9 @@ function parseWindowSelector(raw: unknown): WindowSelectorField {
 function parseImageSource(raw: unknown): ImageSourceField {
   if (typeof raw === "string") return { kind: "path", value: raw };
   const s = (raw ?? {}) as Record<string, unknown>;
-  if (typeof s.data === "string") return { kind: "embedded", data: s.data };
+  if (typeof s.data === "string") {
+    return { kind: "embedded", data: s.data, ...(typeof s.captured_scale === "number" ? { capturedScale: s.captured_scale } : {}) };
+  }
   return { kind: "path", value: "" };
 }
 
@@ -158,7 +160,7 @@ function parseStepAction(raw: unknown): FlowNode {
         id,
         kind: "find_image",
         image: parseImageSource(s.image),
-        mode: (s.mode as "exact" | "similar") ?? "exact",
+        mode: (s.mode as "exact" | "similar" | "ai") ?? "exact",
         threshold: Number(s.threshold ?? 0.85),
         minScale: Number(s.min_scale ?? 0.7),
         maxScale: Number(s.max_scale ?? 1.4),

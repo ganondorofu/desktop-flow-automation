@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { AppWindow, Crosshair } from "lucide-react";
-import { pickAndCropImage } from "../../data/regionPicker";
+import { pickAndCropImage, primaryScaleFactor } from "../../data/regionPicker";
 
 export const RECORD_DELAY_MS = 3000;
 
@@ -43,8 +43,15 @@ type CaptureStage = "idle" | "picking" | "done" | "error";
  *  bytes as base64 directly — replaces an earlier two-corner countdown
  *  flow that was hard to aim precisely. The image is embedded straight
  *  into the flow (see `ImageSourceField`), not saved to a path the
- *  user has to keep track of separately. */
-export function CaptureRegionButton({ onCaptured }: { onCaptured: (base64Png: string) => void }) {
+ *  user has to keep track of separately.
+ *
+ *  Also records this machine's current DPI scale factor (`onCaptured`'s
+ *  second argument) alongside the image — this is the one path that
+ *  actually captures live, right now, on whatever machine is running
+ *  Relay at this moment, so it's the only place `capturedScale` can be
+ *  filled in honestly (browsing an existing file has no such moment to
+ *  record). See `ImageSourceField`'s doc comment for what that's for. */
+export function CaptureRegionButton({ onCaptured }: { onCaptured: (base64Png: string, capturedScale: number) => void }) {
   const { t } = useTranslation();
   const [stage, setStage] = useState<CaptureStage>("idle");
 
@@ -56,7 +63,8 @@ export function CaptureRegionButton({ onCaptured }: { onCaptured: (base64Png: st
         setStage("idle");
         return;
       }
-      onCaptured(result.croppedPng);
+      const scale = await primaryScaleFactor();
+      onCaptured(result.croppedPng, scale);
       setStage("done");
     } catch (error) {
       console.error("region capture failed", error);

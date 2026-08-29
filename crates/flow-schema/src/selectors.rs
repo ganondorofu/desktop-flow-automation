@@ -108,7 +108,27 @@ pub enum ImageSource {
     /// file self-contained: copy or send just the one file and the
     /// reference image comes with it, no separate asset to keep track
     /// of or lose.
-    Embedded { data: String },
+    Embedded {
+        data: String,
+        /// The DPI scale factor (1.0 at 100%, 1.5 at 150%, ...) of
+        /// whichever machine the built-in region picker captured this
+        /// image on — `None` for a flow saved before this existed, or
+        /// an image loaded from a file (`Path`) rather than captured
+        /// directly, where there's no reliable "what scale was this
+        /// at" to record. Lets `find_image_on_screen` search *around*
+        /// the size the reference image should actually appear at on
+        /// *this* machine — `current_scale / captured_scale` — instead
+        /// of blindly assuming this run's screen uses the same
+        /// scaling the capture did. A flow authored on a 100%-scaled
+        /// desktop and run on a 150%-scaled laptop needs the needle
+        /// searched at roughly 1.5x its embedded size; without this,
+        /// that's outside the default `min_scale`/`max_scale` window
+        /// entirely, and a low threshold "fixing" the resulting
+        /// no-match just accepts a wrong, coincidental match instead —
+        /// the exact failure mode this exists to close.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        captured_scale: Option<f64>,
+    },
 }
 
 impl From<&str> for ImageSource {

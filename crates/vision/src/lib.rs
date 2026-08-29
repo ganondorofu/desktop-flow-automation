@@ -13,8 +13,17 @@
 //! correlation matching. ORB feature matching and a real embedding
 //! model are still open (see docs/roadmap.md Phase 2).
 
-use image::GrayImage;
+use image::{GrayImage, RgbImage};
 use imageproc::template_matching::{find_extremes, match_template, MatchTemplateMethod};
+
+pub mod embedding;
+
+/// How many of `locate_candidates`' per-scale candidates get a full
+/// embedding inference — bounds `find_ai_similar`'s cost to a fixed
+/// number of (relatively expensive) CNN forward passes regardless of
+/// `scale_steps`, since the whole point of this mode is trading speed
+/// for robustness, not multiplying speed cost by scale resolution too.
+const AI_CANDIDATE_COUNT: usize = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchResult {
@@ -71,6 +80,40 @@ pub fn find_similar(
     locate(haystack, needle, min_scale, max_scale, steps).filter(|m| m.score >= threshold)
 }
 
+/// The "AI" match tier: localizes candidate positions the same way
+/// `find_similar` does (cheap NCC scan across `[min_scale,
+/// max_scale]`), but makes the final accept/reject decision using CNN
+/// embedding similarity instead of raw pixel correlation. Robust to
+/// color/brightness shifts and compression noise that would sink
+/// `find_similar`'s NCC score, at the cost of one embedding inference
+/// per candidate (see `AI_CANDIDATE_COUNT`) — meaningfully slower than
+/// the other two modes, by design.
+pub fn find_ai_similar(
+    haystack_rgb: &RgbImage,
+    needle_rgb: &RgbImage,
+    min_scale: f64,
+    max_scale: f64,
+    steps: u32,
+    threshold: f64,
+) -> Option<MatchResult> {
+    let haystack_gray = image::DynamicImage::ImageRgb8(haystack_rgb.clone()).into_luma8();
+    let needle_gray = image::DynamicImage::ImageRgb8(needle_rgb.clone()).into_luma8();
+
+    let candidates = locate_candidates(&haystack_gray, &needle_gray, min_scale, max_scale, steps, AI_CANDIDATE_COUNT);
+    let needle_embedding = embedding::embed(needle_rgb)?;
+
+    candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let crop = image::imageops::crop_imm(haystack_rgb, candidate.x, candidate.y, candidate.width, candidate.height).to_image();
+            let crop_embedding = embedding::embed(&crop)?;
+            let score = embedding::cosine_similarity(&crop_embedding, &needle_embedding);
+            Some(MatchResult { score, ..candidate })
+        })
+        .filter(|m| m.score >= threshold)
+        .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
+}
+
 /// Finds the best-scoring match across `[min_scale, max_scale]` in
 /// `steps` increments. On a haystack too small for the brute-force
 /// cost to matter, searches directly at full resolution (identical to
@@ -109,7 +152,15 @@ fn locate(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f
         }
     }
     let coarse = best?;
+    refine_around(haystack, needle, &coarse)
+}
 
+/// The coarse pass's location is only approximate (downscaled
+/// localization plus resampling error) — refine within a generous
+/// margin around it rather than trusting it exactly. Shared by
+/// `locate`'s single-best path and `locate_candidates`' multi-best
+/// path.
+fn refine_around(haystack: &GrayImage, needle: &GrayImage, coarse: &MatchResult) -> Option<MatchResult> {
     let (needle_w, needle_h) = needle.dimensions();
     let full_w = ((needle_w as f64) * coarse.scale).round() as u32;
     let full_h = ((needle_h as f64) * coarse.scale).round() as u32;
@@ -117,9 +168,6 @@ fn locate(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f
         return None;
     }
 
-    // The coarse pass's location is only approximate (downscaled
-    // localization plus resampling error) — refine within a generous
-    // margin around it rather than trusting it exactly.
     let approx_x = coarse.x.saturating_mul(COARSE_DOWNSCALE);
     let approx_y = coarse.y.saturating_mul(COARSE_DOWNSCALE);
     let margin_x = full_w.max(COARSE_DOWNSCALE * 4);
@@ -141,20 +189,69 @@ fn locate(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f
     })
 }
 
-fn brute_force(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f64, steps: u32) -> Option<MatchResult> {
-    let mut best: Option<MatchResult> = None;
+/// Like `locate`, but returns up to `top_n` distinct-scale candidates
+/// instead of collapsing to a single best — used by the `Ai` match
+/// mode, where the final decision is made by embedding similarity
+/// rather than raw NCC score, so a candidate that scores low on NCC
+/// (different color/lighting) but is still the right shape/position
+/// shouldn't be thrown away before the embedding gets a look at it.
+/// One candidate per scale step (not full local-maxima suppression
+/// within a scale) — keeps the cost bounded to at most `steps + 1`
+/// correlation passes plus `top_n` refine passes, same order of
+/// magnitude as `locate`.
+pub(crate) fn locate_candidates(
+    haystack: &GrayImage,
+    needle: &GrayImage,
+    min_scale: f64,
+    max_scale: f64,
+    steps: u32,
+    top_n: usize,
+) -> Vec<MatchResult> {
+    let steps = steps.max(1);
 
+    if haystack.width().saturating_mul(haystack.height()) <= LARGE_HAYSTACK_PIXELS {
+        let mut all = scan_scales(haystack, needle, min_scale, max_scale, steps);
+        all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all.truncate(top_n);
+        return all;
+    }
+
+    let coarse_haystack = image::imageops::resize(
+        haystack,
+        (haystack.width() / COARSE_DOWNSCALE).max(1),
+        (haystack.height() / COARSE_DOWNSCALE).max(1),
+        image::imageops::FilterType::Triangle,
+    );
+
+    let mut coarse_candidates = Vec::new();
     for i in 0..=steps {
         let t = i as f64 / steps as f64;
         let scale = min_scale + (max_scale - min_scale) * t;
-        if let Some(candidate) = find_at_scale(haystack, needle, scale) {
-            if best.as_ref().is_none_or(|b| candidate.score > b.score) {
-                best = Some(candidate);
-            }
+        let coarse_scale = scale / COARSE_DOWNSCALE as f64;
+        if let Some(candidate) = find_at_scale(&coarse_haystack, needle, coarse_scale) {
+            coarse_candidates.push(MatchResult { scale, ..candidate });
         }
     }
+    coarse_candidates.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    coarse_candidates.truncate(top_n);
 
-    best
+    coarse_candidates.into_iter().filter_map(|coarse| refine_around(haystack, needle, &coarse)).collect()
+}
+
+fn scan_scales(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f64, steps: u32) -> Vec<MatchResult> {
+    (0..=steps)
+        .filter_map(|i| {
+            let t = i as f64 / steps as f64;
+            let scale = min_scale + (max_scale - min_scale) * t;
+            find_at_scale(haystack, needle, scale)
+        })
+        .collect()
+}
+
+fn brute_force(haystack: &GrayImage, needle: &GrayImage, min_scale: f64, max_scale: f64, steps: u32) -> Option<MatchResult> {
+    scan_scales(haystack, needle, min_scale, max_scale, steps)
+        .into_iter()
+        .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 fn find_at_scale(haystack: &GrayImage, needle: &GrayImage, scale: f64) -> Option<MatchResult> {
@@ -200,6 +297,16 @@ mod tests {
     /// A `field_size`x`field_size` white field with `patch` stamped at (x, y).
     fn field_with_patch(field_size: u32, patch: &GrayImage, x: u32, y: u32) -> GrayImage {
         let mut img = GrayImage::from_pixel(field_size, field_size, Luma([255]));
+        image::imageops::overlay(&mut img, patch, x as i64, y as i64);
+        img
+    }
+
+    fn textured_patch_rgb(size: u32) -> image::RgbImage {
+        image::DynamicImage::ImageLuma8(textured_patch(size)).into_rgb8()
+    }
+
+    fn field_with_patch_rgb(field_size: u32, patch: &image::RgbImage, x: u32, y: u32) -> image::RgbImage {
+        let mut img = image::RgbImage::from_pixel(field_size, field_size, image::Rgb([255, 255, 255]));
         image::imageops::overlay(&mut img, patch, x as i64, y as i64);
         img
     }
@@ -252,5 +359,35 @@ mod tests {
 
         // An impossibly high threshold should reject even a real match.
         assert!(find_similar(&haystack, &needle, 1.0, 1.0, 1, 1.5).is_none());
+    }
+
+    #[test]
+    fn find_ai_similar_locates_a_needle_present_at_a_different_scale() {
+        let needle = textured_patch_rgb(8);
+        let resized = image::imageops::resize(&needle, 16, 16, image::imageops::FilterType::Lanczos3);
+        let haystack = field_with_patch_rgb(60, &resized, 10, 10);
+
+        // A low threshold: embedding cosine similarity on tiny
+        // synthetic gradient patches (not real photos) doesn't cleanly
+        // map onto the 0.9+ range that raw NCC does — this test's
+        // purpose is confirming the localization + embedding pipeline
+        // wires together and finds roughly the right position, not
+        // tuning a realistic threshold (that needs real reference
+        // images) or pixel-exact localization (final ranking is by
+        // embedding score across several NCC-selected candidate
+        // scales, which can pick a slightly-off neighbor over the
+        // single best-NCC one — that's inherent to this mode's design).
+        let result = find_ai_similar(&haystack, &needle, 0.5, 2.5, 8, 0.0).expect("expected a match");
+        assert!(result.x.abs_diff(10) <= 2 && result.y.abs_diff(10) <= 2, "expected near (10, 10), got ({}, {})", result.x, result.y);
+    }
+
+    #[test]
+    fn find_ai_similar_respects_the_threshold() {
+        let needle = textured_patch_rgb(8);
+        let haystack = field_with_patch_rgb(40, &needle, 15, 22);
+
+        // An impossibly high cosine-similarity threshold rejects even
+        // the true match.
+        assert!(find_ai_similar(&haystack, &needle, 1.0, 1.0, 1, 1.1).is_none());
     }
 }

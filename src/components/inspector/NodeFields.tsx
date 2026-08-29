@@ -387,9 +387,16 @@ export function NodeFields({
               >
                 {t("inspector.fields.modeSimilar")}
               </button>
+              <button
+                className={node.mode === "ai" ? "active" : ""}
+                onClick={() => onChange((n) => (n.kind === "find_image" ? { ...n, mode: "ai" } : n))}
+              >
+                {t("inspector.fields.modeAi")}
+              </button>
             </div>
+            {node.mode === "ai" && <p className="insp-hint">{t("inspector.fields.modeAiHint")}</p>}
           </div>
-          {node.mode === "similar" && (
+          {(node.mode === "similar" || node.mode === "ai") && (
             <div className="field">
               <label>{t("inspector.fields.perfPreset")}</label>
               <div className="switch-row" role="group" aria-label={t("inspector.fields.perfPreset")}>
@@ -408,7 +415,7 @@ export function NodeFields({
               <p className="insp-hint">{t("inspector.fields.perfPresetHint")}</p>
             </div>
           )}
-          {detailed && node.mode === "similar" && (
+          {detailed && (node.mode === "similar" || node.mode === "ai") && (
             <div className="field">
               <label>{t("inspector.fields.threshold")}</label>
               <div className="slider-row">
@@ -427,7 +434,7 @@ export function NodeFields({
               </div>
             </div>
           )}
-          {detailed && node.mode === "similar" && (
+          {detailed && (node.mode === "similar" || node.mode === "ai") && (
             <div className="field">
               <label>{t("inspector.fields.sizeTolerance")}</label>
               <div className="field-row">

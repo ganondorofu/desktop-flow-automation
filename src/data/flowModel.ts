@@ -168,8 +168,14 @@ function describeWindowSelector(field: WindowSelectorField): string {
  *  `flow_schema::ImageSource`. `path` points at a file on disk (the
  *  original behavior); `embedded` carries the image's base64-encoded
  *  bytes straight in the flow file, so the `.relay` file is
- *  self-contained and safe to copy/share without a separate asset. */
-export type ImageSourceField = { kind: "path"; value: string } | { kind: "embedded"; data: string };
+ *  self-contained and safe to copy/share without a separate asset.
+ *  `capturedScale` (only ever set by the in-app region picker, via
+ *  `primaryScaleFactor()`) records this machine's DPI scale factor at
+ *  capture time, so `find_image` can predict how much bigger/smaller
+ *  the reference should appear on whatever machine actually runs the
+ *  flow instead of assuming it'll match 1:1 — see
+ *  `flow_schema::ImageSource::Embedded`'s doc comment. */
+export type ImageSourceField = { kind: "path"; value: string } | { kind: "embedded"; data: string; capturedScale?: number };
 
 export function makeImageSource(value = ""): ImageSourceField {
   return { kind: "path", value };
@@ -247,15 +253,15 @@ export type FlowNode = (
       id: string;
       kind: "find_image";
       image: ImageSourceField;
-      mode: "exact" | "similar";
+      mode: "exact" | "similar" | "ai";
       threshold: number;
-      /** Only used by `mode: "similar"` — how much smaller/larger
-       *  than the reference image a match is still allowed to be
-       *  (1.0 = same size). Mirrors `flow_schema::Action::FindImage`'s
-       *  `min_scale`/`max_scale`. */
+      /** Only used by `mode: "similar"`/`"ai"` — how much
+       *  smaller/larger than the reference image a match is still
+       *  allowed to be (1.0 = same size). Mirrors
+       *  `flow_schema::Action::FindImage`'s `min_scale`/`max_scale`. */
       minScale: number;
       maxScale: number;
-      /** Only used by `mode: "similar"` — how many scale steps to
+      /** Only used by `mode: "similar"`/`"ai"` — how many scale steps to
        *  sample across `[minScale, maxScale]`. More steps costs
        *  roughly proportionally more time for a finer-grained match;
        *  fewer is faster but coarser. Mirrors

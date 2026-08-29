@@ -170,7 +170,11 @@ function nodeActionYamlLines(node: FlowNode, indent: string, head: string): stri
         head,
         `${indent}  type: find_image`,
         ...(node.image.kind === "embedded"
-          ? [`${indent}  image:`, `${indent}    data: ${yamlString(node.image.data)}`]
+          ? [
+              `${indent}  image:`,
+              `${indent}    data: ${yamlString(node.image.data)}`,
+              ...(node.image.capturedScale != null ? [`${indent}    captured_scale: ${node.image.capturedScale}`] : []),
+            ]
           : [`${indent}  image: ${yamlString(node.image.value)}`]),
         `${indent}  mode: ${node.mode}`,
         `${indent}  threshold: ${node.threshold}`,

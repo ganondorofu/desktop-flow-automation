@@ -156,25 +156,34 @@ pub enum Action {
         image: ImageSource,
         #[serde(default)]
         mode: MatchMode,
-        /// Only used by `Similar` — `Exact` always requires ~perfect
-        /// correlation at the original size.
+        /// Used by `Similar` and `Ai` — `Exact` always requires
+        /// ~perfect correlation at the original size. For `Ai` this is
+        /// a cosine-similarity threshold (embedding space) rather than
+        /// a normalized-cross-correlation score, but both are roughly
+        /// 0..1 so the same UI slider/field is reused.
         #[serde(default = "default_threshold")]
         threshold: f64,
-        /// Only used by `Similar` — how much smaller/larger than the
-        /// reference image a match is still allowed to be (1.0 = same
-        /// size). `Exact` always searches at exactly 1.0.
+        /// Used by `Similar` and `Ai` — how much smaller/larger than
+        /// the reference image a match is still allowed to be (1.0 =
+        /// same size). `Exact` always searches at exactly 1.0. For
+        /// `Ai` this bounds the candidate-localization scan that feeds
+        /// the embedding rescoring, same as it bounds `Similar`'s NCC
+        /// scan.
         #[serde(default = "default_min_scale")]
         min_scale: f64,
         #[serde(default = "default_max_scale")]
         max_scale: f64,
-        /// Only used by `Similar` — how many scale steps to sample
+        /// Used by `Similar` and `Ai` — how many scale steps to sample
         /// across `[min_scale, max_scale]`. More steps costs roughly
         /// proportionally more time (each is close to a full
         /// coarse-then-refine search — see `vision::locate`) in
         /// exchange for a finer-grained match to the true scale;
         /// fewer steps is faster but coarser. The UI's "認識パフォーマンス"
         /// low/balanced/high presets set this together with
-        /// `min_scale`/`max_scale`.
+        /// `min_scale`/`max_scale`. `Ai` only runs embedding inference
+        /// on a handful of the resulting candidates regardless of step
+        /// count (see `vision::AI_CANDIDATE_COUNT`), so this affects
+        /// `Ai`'s localization precision more than its wall-clock time.
         #[serde(default = "default_scale_steps")]
         scale_steps: u32,
     },
@@ -637,6 +646,10 @@ pub enum MatchMode {
     #[default]
     Exact,
     Similar,
+    /// CNN embedding similarity — robust to color/brightness shifts
+    /// and noise that break `Similar`'s pixel correlation, at the cost
+    /// of being noticeably slower (a forward pass per candidate).
+    Ai,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]

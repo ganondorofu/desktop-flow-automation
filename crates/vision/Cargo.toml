@@ -4,5 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+candle-core = "0.11.0"
+candle-onnx = "0.11.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 imageproc = "0.25"
+prost = "0.14.4"

@@ -1907,14 +1907,31 @@ pub fn find_image_on_screen(
     scale_steps: u32,
 ) -> Result<flow_schema::ImageMatch, AutomationError> {
     let screen = capture_screen()?;
-    let haystack = image::DynamicImage::ImageRgb8(screen).into_luma8();
+    let haystack = image::DynamicImage::ImageRgb8(screen.clone()).into_luma8();
 
     let needle_image = load_reference_image(image)?;
+    let needle_rgb = needle_image.to_rgb8();
     let needle = needle_image.into_luma8();
+
+    let dpi = primary_monitor_dpi()?;
+    let scale = dpi as f64 / DEFAULT_DPI as f64;
+
+    // A reference image captured on a machine at a different DPI scale
+    // than this one needs to be searched at roughly
+    // `current_scale / captured_scale` its embedded size, not around
+    // 1.0 — see `ImageSource::Embedded`'s doc comment. `min_scale`/
+    // `max_scale` (the flow author's own "give or take how much"
+    // tolerance) apply *around* that predicted size instead of around
+    // a flat 1.0 when we know it; falls back to today's behavior
+    // (search around 1.0) for a `Path` image or an `Embedded` one
+    // saved before this existed.
+    let expected_scale = expected_image_scale(image, scale);
+    let (min_scale, max_scale) = (min_scale * expected_scale, max_scale * expected_scale);
 
     let result = match mode {
         MatchMode::Exact => vision::find_exact(&haystack, &needle),
         MatchMode::Similar => vision::find_similar(&haystack, &needle, min_scale, max_scale, scale_steps, threshold),
+        MatchMode::Ai => vision::find_ai_similar(&screen, &needle_rgb, min_scale, max_scale, scale_steps, threshold),
     };
 
     let result = result.ok_or_else(|| AutomationError(format!("no match above threshold {threshold}")))?;
@@ -1924,8 +1941,6 @@ pub fn find_image_on_screen(
     // center back to the logical, DPI-independent coordinates every
     // other stored point (`MonitorPoint`) uses, the inverse of
     // `to_physical_coordinates`.
-    let dpi = primary_monitor_dpi()?;
-    let scale = dpi as f64 / DEFAULT_DPI as f64;
     let center_x_physical = result.x as f64 + result.width as f64 / 2.0;
     let center_y_physical = result.y as f64 + result.height as f64 / 2.0;
     Ok(flow_schema::ImageMatch {
@@ -1938,6 +1953,19 @@ pub fn find_image_on_screen(
     })
 }
 
+/// How much bigger/smaller `image` should be expected to appear on a
+/// screen at `current_scale` (this machine's DPI scale factor — 1.0 at
+/// 100%, 1.5 at 150%, ...) than it was when captured — see
+/// `ImageSource::Embedded`'s doc comment. `1.0` (search around the
+/// image's own embedded size, unchanged from before this existed)
+/// whenever there's no captured-scale metadata to reason from at all.
+fn expected_image_scale(image: &ImageSource, current_scale: f64) -> f64 {
+    match image {
+        ImageSource::Embedded { captured_scale: Some(captured), .. } if *captured > 0.0 => current_scale / captured,
+        _ => 1.0,
+    }
+}
+
 /// Loads a `find_image` step's reference image regardless of which
 /// `ImageSource` variant it is — a path reads straight from disk (the
 /// original behavior); embedded data is base64-decoded and parsed
@@ -1947,7 +1975,7 @@ fn load_reference_image(image: &ImageSource) -> Result<image::DynamicImage, Auto
         ImageSource::Path(path) => {
             image::open(path).map_err(|e| AutomationError(format!("failed to load reference image '{path}': {e}")))
         }
-        ImageSource::Embedded { data } => {
+        ImageSource::Embedded { data, .. } => {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(data)
                 .map_err(|e| AutomationError(format!("embedded reference image is not valid base64: {e}")))?;
@@ -2423,6 +2451,32 @@ fn json_value_at_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_image_scale_predicts_the_dpi_size_difference() {
+        // A desktop (100%, scale 1.0) captured this image; running on
+        // a laptop at 150% (scale 1.5) should expect it to appear 1.5x
+        // as large — the exact cross-device case that motivated this.
+        let img = ImageSource::Embedded { data: String::new(), captured_scale: Some(1.0) };
+        assert_eq!(expected_image_scale(&img, 1.5), 1.5);
+        // The reverse: captured at 150%, run at 100% — expect it 1/1.5
+        // (~0.667x) as large.
+        let img = ImageSource::Embedded { data: String::new(), captured_scale: Some(1.5) };
+        assert!((expected_image_scale(&img, 1.0) - (1.0 / 1.5)).abs() < 1e-9);
+        // Same machine, same scale — no adjustment.
+        let img = ImageSource::Embedded { data: String::new(), captured_scale: Some(1.25) };
+        assert_eq!(expected_image_scale(&img, 1.25), 1.0);
+    }
+
+    #[test]
+    fn expected_image_scale_falls_back_to_1_without_capture_metadata() {
+        // No metadata at all (a flow saved before this existed).
+        let img = ImageSource::Embedded { data: String::new(), captured_scale: None };
+        assert_eq!(expected_image_scale(&img, 1.5), 1.0);
+        // A file loaded from disk — never has a reliable captured scale.
+        let img = ImageSource::Path("target.png".into());
+        assert_eq!(expected_image_scale(&img, 1.5), 1.0);
+    }
 
     /// Real GDI screen capture — needs an interactive desktop session,
     /// so it's `#[ignore]`d by default (headless CI has none) and run
